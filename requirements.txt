@@ -1,0 +1,9 @@
+streamlit
+pandas
+numpy
+plotly
+qrcode[pil]
+opencv-python
+pyzbar
+scikit-learn
+pillow
