@@ -1,9 +1,9 @@
 streamlit
+supabase
+cachetools<6
 pandas
 numpy
 plotly
-qrcode[pil]
-opencv-python
-pyzbar
 scikit-learn
-pillow
+joblib
+qrcode
