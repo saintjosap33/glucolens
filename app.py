@@ -17,6 +17,8 @@ import os
 import io
 import base64
 from datetime import datetime
+from supabase import create_client, Client
+
 
 # ── Supabase ──────────────────────────────────────────────────────────────────
 try:
@@ -39,10 +41,29 @@ SCALER_PATH = "scaler.pkl"
 QR_FOLDER   = "/tmp/qrcodes"
 os.makedirs(QR_FOLDER, exist_ok=True)
 
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")  if hasattr(st, "secrets") else ""
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")  if hasattr(st, "secrets") else ""
-TABLE_NAME   = "patients"
+# Load secrets safely
+SUPABASE_URL = ""
+SUPABASE_KEY = ""
 
+try:
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+except Exception:
+    pass  # fallback to empty if not set
+
+TABLE_NAME = "patients"
+
+@st.cache_resource
+def get_supabase() -> "Client | None":
+    """Create and cache Supabase client"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    try:
+        client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        return client
+    except Exception as e:
+        st.sidebar.error(f"Supabase connection failed: {e}")
+        return None
 CREDENTIALS = {
     "admin":   {"password": "admin123", "role": "Admin"},
     "doctor":  {"password": "doc123",   "role": "Doctor"},
