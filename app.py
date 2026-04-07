@@ -42,8 +42,8 @@ QR_FOLDER   = "/tmp/qrcodes"
 os.makedirs(QR_FOLDER, exist_ok=True)
 
 # Load secrets safely
-SUPABASE_URL = ""
-SUPABASE_KEY = ""
+SUPABASE_URL = "https://wgqlrcpywbzxrlbcahco.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndncWxyY3B5d2J6eHJsYmNhaGNvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU1Mjg2NTksImV4cCI6MjA5MTEwNDY1OX0.PQ2mtWDcj0p9Bd0h9hAy0Srzer7WYsySE0V8OlKQps8"
 
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
