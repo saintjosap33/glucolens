@@ -37,7 +37,6 @@ import pandas as pd
 import numpy as np
 import joblib
 import qrcode
-import cv2
 import os
 import io
 import base64
@@ -61,14 +60,6 @@ try:
     JWT_AVAILABLE = True
 except ImportError:
     JWT_AVAILABLE = False
-
-# ── WebRTC camera scanning ────────────────────────────────────────────────────
-try:
-    from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
-    import av
-    WEBRTC_AVAILABLE = True
-except ImportError:
-    WEBRTC_AVAILABLE = False
 
 # ── pyzbar QR decode ──────────────────────────────────────────────────────────
 try:
@@ -328,9 +319,6 @@ _defaults = dict(
     logged_in=False, role=None, username=None,
     doc_record=None, doc_pid=None,
     pat_record=None, pat_pid=None,
-    scan_result=None,           # decoded JWT payload from QR scan
-    qr_scan_active=False,       # is camera open?
-    last_scanned_token=None,    # raw JWT string last seen
 )
 for k, v in _defaults.items():
     if k not in st.session_state:
@@ -537,71 +525,6 @@ def qr_from_image_file(pil_img) -> str | None:
         except Exception:
             pass
     return None
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  CAMERA QR SCANNER  (streamlit-webrtc path)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class _QRVideoProcessor:
-    """
-    Video frame processor for streamlit-webrtc.
-    Runs server-side: decodes each frame with pyzbar, writes any found
-    JWT token to session_state.last_scanned_token.
-    """
-    def recv(self, frame: "av.VideoFrame") -> "av.VideoFrame":
-        img = frame.to_ndarray(format="bgr24")
-        if PYZBAR_AVAILABLE:
-            try:
-                decoded = pyzbar_lib.decode(img)
-                for d in decoded:
-                    if d.type == "QRCODE":
-                        token = d.data.decode("utf-8")
-                        # Draw bounding box
-                        pts = d.polygon
-                        if len(pts) == 4:
-                            import cv2 as _cv2
-                            pts_np = np.array([(p.x, p.y) for p in pts], dtype=np.int32)
-                            _cv2.polylines(img, [pts_np], True, (99, 102, 241), 3)
-                        st.session_state.last_scanned_token = token
-                        break
-            except Exception:
-                pass
-        import av as _av
-        return _av.VideoFrame.from_ndarray(img, format="bgr24")
-
-
-def camera_qr_scanner():
-    st.info("📷 Starting camera... Press 'q' to scan")
-
-    cap = cv2.VideoCapture(0)
-    detector = cv2.QRCodeDetector()
-
-    scanned_data = None
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            st.error("Camera not accessible")
-            break
-
-        data, bbox, _ = detector.detectAndDecode(frame)
-
-        if data:
-            scanned_data = data
-            st.success("✅ QR Detected!")
-            break
-
-        cv2.imshow("Scan QR", frame)
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
-
-    return scanned_data
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  ML MODEL
@@ -898,34 +821,7 @@ def _patient_qr_login_widget():
         _attempt_jwt_login(raw_token)
         return
 
-    # ── 2. WebRTC live camera ─────────────────────────────────────────────────
-    if WEBRTC_AVAILABLE and PYZBAR_AVAILABLE:
-        st.markdown("""
-        <div style="text-align:center;color:#94a3b8;font-size:13px;margin-bottom:12px;">
-            Point your QR code at the camera
-        </div>
-        <div class="scan-zone">
-            <div class="scan-corner tl"></div><div class="scan-corner tr"></div>
-            <div class="scan-corner bl"></div><div class="scan-corner br"></div>
-            <div class="scan-line"></div>
-        </div>
-        """,unsafe_allow_html=True)
-        ctx = webrtc_streamer(
-            key="login-qr-scanner",
-            mode=WebRtcMode.SENDRECV,
-            rtc_configuration=RTC_CONFIG,
-            video_processor_factory=_QRVideoProcessor,
-            media_stream_constraints={"video":True,"audio":False},
-            async_processing=True,
-        )
-        if ctx.state.playing:
-            token = st.session_state.get("last_scanned_token")
-            if token:
-                _attempt_jwt_login(token)
-                return
-        st.markdown("<br>",unsafe_allow_html=True)
-
-    # ── 3. Fallback: image upload ─────────────────────────────────────────────
+    # ── 2. Fallback: image upload ─────────────────────────────────────────────
     st.markdown("""<div style="color:#64748b;font-size:12px;text-align:center;margin-bottom:8px;">
         Or upload your QR image</div>""",unsafe_allow_html=True)
     uploaded = st.file_uploader("Upload QR Image",type=["png","jpg","jpeg"],
@@ -939,30 +835,6 @@ def _patient_qr_login_widget():
             return
         else:
             st.error("❌ Could not read QR code from image. Ensure pyzbar/libzbar is installed.")
-
-    # ── 4. Fallback: manual Patient ID ───────────────────────────────────────
-    st.markdown("""<div style="color:#64748b;font-size:12px;text-align:center;
-                    margin:12px 0 6px;">Or enter Patient ID manually</div>""",
-                unsafe_allow_html=True)
-    man_pid = st.text_input("Patient ID",placeholder="e.g. P001",
-                             key="manual_pat_id_login",label_visibility="collapsed")
-    if st.button("Access Record →",use_container_width=True,key="manual_login_btn"):
-        if man_pid.strip():
-            df  = db_fetch_all()
-            pid_col = next((c for c in df.columns if c.lower()=="patient_id"),None)
-            if pid_col:
-                rows = df[df[pid_col].astype(str).str.strip()==man_pid.strip()]
-                if not rows.empty:
-                    st.session_state.logged_in  = True
-                    st.session_state.role       = "Patient"
-                    st.session_state.username   = None
-                    st.session_state.pat_pid    = man_pid.strip()
-                    st.session_state.pat_record = rows.iloc[0].to_dict()
-                    st.rerun()
-                else:
-                    st.error("Patient ID not found.")
-
-
 def _attempt_jwt_login(token: str):
     """Verify JWT and auto-login the patient if valid."""
     payload = verify_qr_token(token)
@@ -989,8 +861,7 @@ def _attempt_jwt_login(token: str):
             st.rerun()
         else:
             st.error("⚠️ QR verified but patient record not found.")
-            st.write("RAW QR TOKEN:", token)
-            st.write("DECODED PAYLOAD:", payload)
+
     else:
         st.error("❌ Invalid or expired QR token. Please request a new QR from admin.")
         st.session_state.last_scanned_token = None
