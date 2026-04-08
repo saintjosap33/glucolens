@@ -989,6 +989,8 @@ def _attempt_jwt_login(token: str):
             st.rerun()
         else:
             st.error("⚠️ QR verified but patient record not found.")
+            st.write("RAW QR TOKEN:", token)
+            st.write("DECODED PAYLOAD:", payload)
     else:
         st.error("❌ Invalid or expired QR token. Please request a new QR from admin.")
         st.session_state.last_scanned_token = None
