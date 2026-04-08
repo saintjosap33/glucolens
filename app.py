@@ -122,8 +122,6 @@ ML_FEATURES = [
     "MedicationAdherence","HealthLiteracy"
 ]
 
-RTC_CONFIG = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
-
 # ═══════════════════════════════════════════════════════════════════════════════
 #  PAGE CONFIG & CSS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -357,34 +355,6 @@ def db_upsert(row: dict) -> bool:
             st.error(f"DB write error: {e}")
     return False
 
-def _demo_df() -> pd.DataFrame:
-    return pd.DataFrame([
-        {"patient_id":"P001","name":"Arun Kumar",    "age":52,"gender":1,"bmi":29.4,"hba1c":7.2,
-         "fasting_blood_sugar":136,"cholesterol_total":210,"systolic_bp":138,"diastolic_bp":88,
-         "hypertension":1,"family_history_diabetes":1,"smoking":0,"physical_activity":2,
-         "diet_quality":2,"sleep_quality":2,"diagnosis":"Pre-diabetic","doctor_remarks":"",
-         "created_at":datetime.utcnow().isoformat()},
-        {"patient_id":"P002","name":"Meena Selvam",  "age":45,"gender":0,"bmi":27.1,"hba1c":6.1,
-         "fasting_blood_sugar":112,"cholesterol_total":188,"systolic_bp":122,"diastolic_bp":80,
-         "hypertension":0,"family_history_diabetes":0,"smoking":0,"physical_activity":4,
-         "diet_quality":3,"sleep_quality":3,"diagnosis":"Normal","doctor_remarks":"",
-         "created_at":datetime.utcnow().isoformat()},
-        {"patient_id":"P003","name":"Ravi Shankar",  "age":61,"gender":1,"bmi":33.2,"hba1c":8.4,
-         "fasting_blood_sugar":162,"cholesterol_total":235,"systolic_bp":148,"diastolic_bp":94,
-         "hypertension":1,"family_history_diabetes":1,"smoking":1,"physical_activity":1,
-         "diet_quality":1,"sleep_quality":1,"diagnosis":"Diabetic",
-         "doctor_remarks":"On Metformin 500mg","created_at":datetime.utcnow().isoformat()},
-        {"patient_id":"P004","name":"Priya Nair",    "age":38,"gender":0,"bmi":24.8,"hba1c":5.6,
-         "fasting_blood_sugar":95, "cholesterol_total":172,"systolic_bp":116,"diastolic_bp":76,
-         "hypertension":0,"family_history_diabetes":0,"smoking":0,"physical_activity":5,
-         "diet_quality":4,"sleep_quality":4,"diagnosis":"Normal","doctor_remarks":"",
-         "created_at":datetime.utcnow().isoformat()},
-        {"patient_id":"P005","name":"Suresh Babu",   "age":57,"gender":1,"bmi":31.0,"hba1c":7.8,
-         "fasting_blood_sugar":148,"cholesterol_total":220,"systolic_bp":142,"diastolic_bp":90,
-         "hypertension":1,"family_history_diabetes":1,"smoking":1,"physical_activity":2,
-         "diet_quality":2,"sleep_quality":2,"diagnosis":"Diabetic",
-         "doctor_remarks":"Follow-up in 3 months","created_at":datetime.utcnow().isoformat()},
-    ])
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  ██████╗      ██╗██╗    ██╗████████╗    ███████╗███████╗ ██████╗
