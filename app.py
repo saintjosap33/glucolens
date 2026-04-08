@@ -37,6 +37,7 @@ import pandas as pd
 import numpy as np
 import joblib
 import qrcode
+import cv2
 import os
 import io
 import base64
@@ -45,6 +46,7 @@ import hashlib
 import hmac
 import json
 from datetime import datetime, timezone, timedelta
+
 
 # ── Supabase ──────────────────────────────────────────────────────────────────
 try:
@@ -569,45 +571,36 @@ class _QRVideoProcessor:
         return _av.VideoFrame.from_ndarray(img, format="bgr24")
 
 
-def camera_qr_scanner() -> str | None:
-    """
-    Renders the live WebRTC camera scanner.
-    Returns the JWT token string once a QR is detected, or None.
+def camera_qr_scanner():
+    st.info("📷 Starting camera... Press 'q' to scan")
 
-    FLOW:
-        1. webrtc_streamer opens browser camera via WebRTC
-        2. Each frame is sent to _QRVideoProcessor.recv()
-        3. pyzbar decodes QR codes in the frame
-        4. Found token written to session_state.last_scanned_token
-        5. Main thread polls and returns the token
-    """
-    if not WEBRTC_AVAILABLE:
-        return None
+    cap = cv2.VideoCapture(0)
+    detector = cv2.QRCodeDetector()
 
-    st.markdown("""
-    <div class="scan-zone">
-        <div class="scan-corner tl"></div>
-        <div class="scan-corner tr"></div>
-        <div class="scan-corner bl"></div>
-        <div class="scan-corner br"></div>
-        <div class="scan-line"></div>
-    </div>
-    """, unsafe_allow_html=True)
+    scanned_data = None
 
-    ctx = webrtc_streamer(
-        key="qr-scanner",
-        mode=WebRtcMode.SENDRECV,
-        rtc_configuration=RTC_CONFIG,
-        video_processor_factory=_QRVideoProcessor,
-        media_stream_constraints={"video": True, "audio": False},
-        async_processing=True,
-    )
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            st.error("Camera not accessible")
+            break
 
-    if ctx.state.playing:
-        token = st.session_state.get("last_scanned_token")
-        if token:
-            return token
-    return None
+        data, bbox, _ = detector.detectAndDecode(frame)
+
+        if data:
+            scanned_data = data
+            st.success("✅ QR Detected!")
+            break
+
+        cv2.imshow("Scan QR", frame)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+    return scanned_data
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
