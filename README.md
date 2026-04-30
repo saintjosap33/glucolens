@@ -1,183 +1,119 @@
-# 🏥 GlucoLens – Smart EMR System with QR-Based Patient Login
+# GlucoLens – Smart EMR System with QR-Based Patient Login
 
-GlucoLens is a **Smart Electronic Medical Record (EMR) system** built using **Streamlit and Supabase**, featuring **secure QR-based patient login** for seamless and passwordless authentication.
+GlucoLens is a smart Electronic Medical Record (EMR) system built using Streamlit and Supabase. It introduces a secure QR-based login mechanism that enables patients to access their medical data instantly without relying on traditional password-based authentication.
 
----
+Overview
 
-## 🚀 Features
+The system is designed to simplify patient data access while maintaining security and usability. By leveraging QR codes embedded with JWT tokens, GlucoLens enables seamless authentication and real-time data retrieval from the database.
 
-* 🔐 **QR-Based Login (JWT Authentication)**
-* 🧑‍⚕️ Patient data management using Supabase
-* 📊 Health metrics tracking (BMI, HbA1c, BP, etc.)
-* ⚡ Real-time data fetching and display
-* 📱 QR scan → Instant patient dashboard
-* ☁️ Deployed on Streamlit Cloud
-
----
-
-## 🧠 How It Works
-
-```text
+Key Features
+QR-based patient login using JWT authentication
+Centralized patient data management with Supabase
+Tracking of critical health metrics such as BMI, HbA1c, blood pressure, and more
+Real-time data retrieval and display
+Instant dashboard access through QR scan
+Deployment-ready on Streamlit Cloud
+System Workflow
 QR Code (JWT Token)
-        ↓
-Decode Token
-        ↓
-Extract patient_id
-        ↓
-Fetch from Supabase
-        ↓
-Login Patient
-```
+↓
+Token Decoding
+↓
+Extract patient\_id
+↓
+Fetch patient data from Supabase
+↓
+Authenticate and display dashboard
+Database Schema
 
----
+Table: patients
 
-## 🗄️ Database Schema (Supabase)
+Column	Type
+patient\_id	TEXT
+name	TEXT
+age	INT
+gender	INT
+bmi	FLOAT
+hba1c	FLOAT
+fasting\_blood\_sugar	INT
+cholesterol\_total	INT
+systolic\_bp	INT
+diastolic\_bp	INT
+hypertension	INT
+family\_history\_diabetes	INT
+smoking	INT
+physical\_activity	INT
+diet\_quality	INT
+sleep\_quality	INT
+diagnosis	TEXT
+doctor\_remarks	TEXT
+created\_at	TIMESTAMP
+QR Token Structure
 
-Table: `patients`
+Each QR code stores a JWT token containing the following payload:
 
-| Column                  | Type      |
-| ----------------------- | --------- |
-| patient_id              | TEXT      |
-| name                    | TEXT      |
-| age                     | INT       |
-| gender                  | INT       |
-| bmi                     | FLOAT     |
-| hba1c                   | FLOAT     |
-| fasting_blood_sugar     | INT       |
-| cholesterol_total       | INT       |
-| systolic_bp             | INT       |
-| diastolic_bp            | INT       |
-| hypertension            | INT       |
-| family_history_diabetes | INT       |
-| smoking                 | INT       |
-| physical_activity       | INT       |
-| diet_quality            | INT       |
-| sleep_quality           | INT       |
-| diagnosis               | TEXT      |
-| doctor_remarks          | TEXT      |
-| created_at              | TIMESTAMP |
-
----
-
-## 🔐 QR Token Structure
-
-QR codes store a JWT token:
-
-```json
 {
-  "patient_id": "P001",
-  "role": "patient",
-  "iat": <issued_time>,
-  "exp": <expiry_time>
+"patient\_id": "P001",
+"role": "patient",
+"iat": <issued\_time>,
+"exp": <expiry\_time>
 }
-```
+Technology Stack
+Frontend: Streamlit
+Backend and Database: Supabase
+QR Detection: OpenCV
+Authentication: JSON Web Tokens (JWT)
+Installation and Setup
 
----
-
-## 🛠️ Tech Stack
-
-* **Frontend**: Streamlit
-* **Backend / DB**: Supabase
-* **QR Detection**: OpenCV
-* **Authentication**: JWT
-
----
-
-## ⚙️ Installation & Setup
-
-### 1. Clone the repository
-
-```bash
+1. Clone the repository
 git clone https://github.com/your-username/glucolens.git
 cd glucolens
-```
-
-### 2. Install dependencies
-
-```bash
+2. Install dependencies
 pip install -r requirements.txt
-```
-
-### 3. Run the app
-
-```bash
+3. Run the application
 streamlit run app.py
-```
+Deployment
 
----
+The application is deployed on Streamlit Cloud.
 
-## 🌐 Deployment
+System-level dependencies such as libzbar were removed to ensure compatibility with the deployment environment. QR scanning is handled using opencv-python-headless.
 
-* Hosted on **Streamlit Cloud**
-* Removed system dependencies (`libzbar`) for compatibility
-* Uses `opencv-python-headless` for QR scanning
+Common Issues and Solutions
+QR verified but patient not found
 
----
+Cause: The patient ID encoded in the QR does not exist in the database
+Solution: Insert the patient record into the database before generating the QR code
 
-## ⚠️ Common Issues & Fixes
+QR not scanning
 
-### ❌ QR verified but patient not found
+Cause: Incompatible libraries or low image quality
+Solution: Use OpenCV for scanning and ensure the QR image is clear
 
-✔ Cause: Patient ID in QR does not exist in DB
-✔ Fix: Insert patient into database before generating QR
+Column not found error
 
----
+Cause: Mismatch between application code and database schema
+Solution: Verify that all required columns such as diet\_quality and doctor\_remarks exist
 
-### ❌ QR not scanning
-
-✔ Use OpenCV instead of pyzbar
-✔ Ensure image quality is clear
-
----
-
-### ❌ Column not found error
-
-✔ Ensure schema matches exactly
-✔ Example: `diet_quality`, `doctor_remarks`
-
----
-
-## ✅ Best Practices
-
-* Always **insert patient → then generate QR**
-* Normalize values:
-
-```python
+Best Practices
+Always insert patient data before generating QR codes
+Normalize patient IDs to avoid mismatches:
 pid = str(pid).strip().upper()
-```
+Use short-lived JWT tokens for improved security
+Future Enhancements
+Bulk patient dataset generation
+Doctor-facing dashboard
+Data analytics and visualization
+Enhanced QR security with token tracking
+Mobile-friendly interface
+Author
 
-* Keep JWT tokens **short-lived (expiry time)**
+Adithya
+Smart Healthcare System Developer
 
----
+Project Status
 
-## 🚀 Future Enhancements
+The system is functional with QR-based login, Supabase integration, and deployment completed. Additional features and improvements are currently in progress.
 
-* 📦 Bulk patient dataset generation
-* 🧑‍⚕️ Doctor dashboard
-* 📊 Data analytics & visualization
-* 🔐 Advanced QR security (token tracking)
-* 📱 Mobile-friendly UI
+Contribution
 
----
+Contributions are welcome. You can fork the repository, make improvements, and submit pull requests.
 
-## 👨‍💻 Author
-
-Adithya – Smart Healthcare System Developer
-
----
-
-## 📌 Project Status
-
-✅ QR Login Working
-✅ Supabase Integration Working
-✅ Deployment Successful
-
-🚧 Enhancements in progress...
-
----
-
-## ⭐ Contribute
-
-Feel free to fork, improve, and submit PRs!
-
----
