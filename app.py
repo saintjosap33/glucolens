@@ -1,35 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════════════════════╗
-║           GLUCO-LENS v4 — Secure Passwordless Healthcare EMR               ║
-╠══════════════════════════════════════════════════════════════════════════════╣
-║  ARCHITECTURE: WHY THIS IS BETTER THAN HOSPITAL SYSTEMS                    ║
-║                                                                             ║
-║  1. JWT-BASED SECURE QR (Passwordless Healthcare Authentication)            ║
-║     • Each patient gets a signed JWT embedded in their QR code             ║
-║     • Token includes patient_id, role, and expiry — cryptographically      ║
-║       signed with HMAC-SHA256 (HS256)                                      ║
-║     • Even if someone photographs the QR, expired tokens are rejected      ║
-║     • Zero friction: patient just scans — no username, no password         ║
-║     • Traditional hospital systems require PIN/password + card swipe       ║
-║       This replaces that entire flow with a single QR tap                  ║
-║                                                                             ║
-║  2. ZERO-FRICTION LOGIN FLOW                                                ║
-║     Patient opens app → Clicks Scan → Camera reads QR → JWT verified      ║
-║     → Auto-login → Dashboard shown. Total time: ~2 seconds                ║
-║     No typing. No errors. No forgotten passwords.                          ║
-║                                                                             ║
-║  3. ACCESS CONTROL                                                          ║
-║     • Patient role: locked to their own patient_id decoded from JWT        ║
-║     • Doctor/Admin: full access via credential login                       ║
-║     • Server-side enforcement — client cannot spoof their patient_id       ║
-║                                                                             ║
-║  4. WHY WEBRTC FOR CAMERA                                                   ║
-║     • streamlit-webrtc runs camera IN browser via WebRTC protocol          ║
-║     • No OpenCV window required, works on Streamlit Cloud                  ║
-║     • Each video frame is processed server-side with pyzbar                ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-"""
-
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
@@ -47,50 +15,45 @@ import json
 from datetime import datetime, timezone, timedelta
 
 
-# ── Supabase ──────────────────────────────────────────────────────────────────
+#Supabase 
 try:
     from supabase import create_client, Client
     SUPABASE_AVAILABLE = True
 except ImportError:
     SUPABASE_AVAILABLE = False
 
-# ── JWT (PyJWT) ───────────────────────────────────────────────────────────────
+#JWT (PyJWT)
 try:
     import jwt as pyjwt
     JWT_AVAILABLE = True
 except ImportError:
     JWT_AVAILABLE = False
 
-# ── pyzbar QR decode ──────────────────────────────────────────────────────────
+#pyzbar QR decode
 try:
     from pyzbar import pyzbar as pyzbar_lib
     PYZBAR_AVAILABLE = True
 except Exception:
     PYZBAR_AVAILABLE = False
 
-# ── PIL ───────────────────────────────────────────────────────────────────────
+#PIL
 from PIL import Image
 
-# ── ML ────────────────────────────────────────────────────────────────────────
+#ML
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  CONFIG
-# ═══════════════════════════════════════════════════════════════════════════════
 MODEL_PATH  = "diabetes_rf.pkl"
 SCALER_PATH = "scaler.pkl"
 QR_FOLDER   = "/tmp/qrcodes"
 TABLE_NAME  = "patients"
 os.makedirs(QR_FOLDER, exist_ok=True)
 
-# JWT secret — in production, load from st.secrets["JWT_SECRET"]
+# JWT secret
 JWT_SECRET  = "gluco-lens-jwt-secret-2024-change-in-production"
-JWT_EXPIRY_DAYS = 365   # QR valid for 1 year; regenerate to revoke
+JWT_EXPIRY_DAYS = 365
 
-# Load Supabase secrets safely
 SUPABASE_URL = ""
 SUPABASE_KEY = ""
 try:
@@ -122,9 +85,7 @@ ML_FEATURES = [
     "MedicationAdherence","HealthLiteracy"
 ]
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  PAGE CONFIG & CSS
-# ═══════════════════════════════════════════════════════════════════════════════
+
 st.set_page_config(page_title="GLUCO-LENS", page_icon="🩺", layout="wide",
                    initial_sidebar_state="expanded")
 
@@ -310,9 +271,8 @@ hr { border-color:rgba(255,255,255,0.06) !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  SESSION STATE
-# ═══════════════════════════════════════════════════════════════════════════════
+# SESSION STATE
+
 _defaults = dict(
     logged_in=False, role=None, username=None,
     doc_record=None, doc_pid=None,
@@ -322,9 +282,9 @@ for k, v in _defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  SUPABASE
-# ═══════════════════════════════════════════════════════════════════════════════
+
+# SUPABASE
+
 @st.cache_resource
 def get_supabase():
     if not SUPABASE_AVAILABLE or not SUPABASE_URL or not SUPABASE_KEY:
@@ -355,17 +315,7 @@ def db_upsert(row: dict) -> bool:
             st.error(f"DB write error: {e}")
     return False
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  ██████╗      ██╗██╗    ██╗████████╗    ███████╗███████╗ ██████╗
-#  ██╔══██╗     ██║██║    ██║╚══██╔══╝    ██╔════╝██╔════╝██╔════╝
-#  ██████╔╝     ██║██║ █╗ ██║   ██║       ███████╗█████╗  ██║
-#  ██╔══██╗██   ██║██║███╗██║   ██║       ╚════██║██╔══╝  ██║
-#  ██║  ██║╚█████╔╝╚███╔███╔╝   ██║       ███████║███████╗╚██████╗
-#  ╚═╝  ╚═╝ ╚════╝  ╚══╝╚══╝    ╚═╝       ╚══════╝╚══════╝ ╚═════╝
-#
-#  JWT SECURE QR SECTION
-# ═══════════════════════════════════════════════════════════════════════════════
+# JWT SECURE QR SECTION
 
 def _hmac_sign(payload_b64: str) -> str:
     """Fallback HMAC signing when PyJWT is unavailable."""
@@ -495,10 +445,9 @@ def qr_from_image_file(pil_img) -> str | None:
         except Exception:
             pass
     return None
+    
+# ML MODEL
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  ML MODEL
-# ═══════════════════════════════════════════════════════════════════════════════
 @st.cache_resource(show_spinner="🧠 Loading / training ML model…")
 def load_or_train_model():
     if os.path.exists(MODEL_PATH) and os.path.exists(SCALER_PATH):
@@ -558,9 +507,8 @@ def load_or_train_model():
 
 MODEL, SCALER, FEATURES, MODEL_ACC, MODEL_SRC = load_or_train_model()
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  ML UTILS
-# ═══════════════════════════════════════════════════════════════════════════════
+# ML UTILS
+
 def sf(x, d=0.0):
     try:
         if x is None or x=="" or (isinstance(x,float) and np.isnan(x)):
@@ -644,7 +592,7 @@ def fmt(v,decimals=2):
     try: return f"{float(v):.{decimals}f}"
     except: return str(v)
 
-# ─── Charts ───────────────────────────────────────────────────────────────────
+# Charts
 def gauge_chart(prob):
     tier,color,_=risk_tier(prob)
     fig=go.Figure(go.Indicator(
@@ -699,7 +647,7 @@ def vitals_radar(rec):
         title=dict(text="Health Profile Radar",font=dict(color="#94a3b8",size=13)))
     return fig
 
-# ─── Header / Sidebar ─────────────────────────────────────────────────────────
+# Header / Sidebar
 def render_header(subtitle="Smart Diabetes EMR"):
     sb="🟢 Connected" if get_supabase() else "🟡 Demo Mode"
     ml=f"🧠 {'Loaded' if MODEL_SRC=='loaded' else 'Auto-trained'}" + (f" · {MODEL_ACC}% acc" if MODEL_ACC else "")
@@ -742,9 +690,8 @@ def render_sidebar():
             for k in _defaults: st.session_state[k]=_defaults[k]
             st.rerun()
 
-# ═══════════════════════════════════════════════════════════════════════════════
 #  LOGIN SCREEN
-# ═══════════════════════════════════════════════════════════════════════════════
+
 def show_login():
     render_header("Secure Healthcare Login")
     _, mid, _ = st.columns([1,1.4,1])
@@ -836,9 +783,8 @@ def _attempt_jwt_login(token: str):
         st.error("❌ Invalid or expired QR token. Please request a new QR from admin.")
         st.session_state.last_scanned_token = None
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  PATIENT RECORD — shared renderer
-# ═══════════════════════════════════════════════════════════════════════════════
+#  PATIENT RECORD 
+
 def _render_patient_record(rec, pid):
     prob, src = predict_prob(rec)
     tier, color, icon = risk_tier(prob)
@@ -924,9 +870,9 @@ def _render_patient_record(rec, pid):
                           font=dict(color="#94a3b8"),height=260,margin=dict(t=40,b=10))
         st.plotly_chart(fig,use_container_width=True)
 
-# ═══════════════════════════════════════════════════════════════════════════════
+
 #  PATIENT PORTAL (post-login)
-# ═══════════════════════════════════════════════════════════════════════════════
+
 def patient_portal():
     render_header("Patient Portal")
     render_sidebar()
@@ -941,9 +887,9 @@ def patient_portal():
 
     _render_patient_record(rec, pid)
 
-# ═══════════════════════════════════════════════════════════════════════════════
+
 #  DOCTOR DASHBOARD
-# ═══════════════════════════════════════════════════════════════════════════════
+
 def doctor_dashboard():
     render_header("Doctor Dashboard")
     render_sidebar()
@@ -1038,9 +984,9 @@ def doctor_dashboard():
             <div style="font-size:16px;">Enter a Patient ID to view their record</div>
         </div>""",unsafe_allow_html=True)
 
-# ═══════════════════════════════════════════════════════════════════════════════
+
 #  ADMIN DASHBOARD
-# ═══════════════════════════════════════════════════════════════════════════════
+
 def admin_dashboard():
     render_header("Admin Dashboard")
     render_sidebar()
@@ -1151,9 +1097,9 @@ def admin_dashboard():
                                    height=280,margin=dict(t=40,b=10))
                 st.plotly_chart(fig2,use_container_width=True)
 
-# ═══════════════════════════════════════════════════════════════════════════════
+
 #  MAIN ROUTER
-# ═══════════════════════════════════════════════════════════════════════════════
+
 if not st.session_state.logged_in:
     show_login()
 else:
