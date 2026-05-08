@@ -15,52 +15,43 @@ import json
 from datetime import datetime, timezone, timedelta
 
 
-# ─── OPTIONAL DEPENDENCIES ────────────────────────────────────────────────────
-
+#Supabase 
 try:
     from supabase import create_client, Client
     SUPABASE_AVAILABLE = True
 except ImportError:
     SUPABASE_AVAILABLE = False
 
+#JWT (PyJWT)
 try:
     import jwt as pyjwt
     JWT_AVAILABLE = True
 except ImportError:
     JWT_AVAILABLE = False
 
+#pyzbar QR decode
 try:
     from pyzbar import pyzbar as pyzbar_lib
     PYZBAR_AVAILABLE = True
 except Exception:
     PYZBAR_AVAILABLE = False
 
+#PIL
 from PIL import Image
 
-# ─── REMOVED IMPORTS (bugs fixed) ─────────────────────────────────────────────
-# BUG FIX #1: Removed → from sklearn.ensemble import RandomForestClassifier
-# BUG FIX #2: Removed → from sklearn.preprocessing import StandardScaler
-# BUG FIX #3: Removed → from sklearn.metrics import accuracy_score
-# BUG FIX #4: Removed → from sklearn.model_selection import train_test_split
-# These imports belonged to the old RF+Scaler pipeline. XGBoost uses neither
-# a StandardScaler nor a RandomForestClassifier.  Keeping them caused confusion
-# and imported dead code into production.
-
-# ─── PATHS ────────────────────────────────────────────────────────────────────
-
-# BUG FIX #5: Replaced old MODEL_PATH / SCALER_PATH with XGBoost artefacts.
-# Old code pointed to "diabetes_rf.pkl" and "scaler.pkl" which do not exist
-# for the new pipeline and caused FileNotFoundError / silent fallback to
-# synthetic RF training on every cold start.
-MODEL_PATH    = "models/diabetes_xgb.pkl"
-FEATURE_PATH  = "models/feature_columns.pkl"
-QR_FOLDER     = "/tmp/qrcodes"
-TABLE_NAME    = "patients"
+#ML
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+MODEL_PATH  = "diabetes_rf.pkl"
+SCALER_PATH = "scaler.pkl"
+QR_FOLDER   = "/tmp/qrcodes"
+TABLE_NAME  = "patients"
 os.makedirs(QR_FOLDER, exist_ok=True)
 
-# ─── JWT / AUTH ───────────────────────────────────────────────────────────────
-
-JWT_SECRET      = "gluco-lens-jwt-secret-2024-change-in-production"
+# JWT secret
+JWT_SECRET  = "gluco-lens-jwt-secret-2024-change-in-production"
 JWT_EXPIRY_DAYS = 365
 
 SUPABASE_URL = ""
@@ -77,18 +68,26 @@ except Exception:
     pass
 
 CREDENTIALS = {
-    "admin":  {"password": "admin123", "role": "Admin"},
-    "doctor": {"password": "doc123",   "role": "Doctor"},
+    "admin":   {"password": "admin123", "role": "Admin"},
+    "doctor":  {"password": "doc123",   "role": "Doctor"},
 }
 
-# ─── PAGE CONFIG ──────────────────────────────────────────────────────────────
+ML_FEATURES = [
+    "Age","Gender","BMI","Smoking","AlcoholConsumption","PhysicalActivity",
+    "DietQuality","SleepQuality","FamilyHistoryDiabetes","GestationalDiabetes",
+    "PolycysticOvarySyndrome","PreviousPreDiabetes","Hypertension",
+    "SystolicBP","DiastolicBP","FastingBloodSugar","HbA1c",
+    "SerumCreatinine","BUNLevels","CholesterolTotal","CholesterolLDL",
+    "CholesterolHDL","CholesterolTriglycerides","AntihypertensiveMedications",
+    "Statins","AntidiabeticMedications","FrequentUrination","ExcessiveThirst",
+    "UnexplainedWeightLoss","FatigueLevels","BlurredVision","SlowHealingSores",
+    "TinglingHandsFeet","QualityOfLifeScore","MedicalCheckupsFrequency",
+    "MedicationAdherence","HealthLiteracy"
+]
 
-st.set_page_config(
-    page_title="GLUCO-LENS",
-    page_icon="🩺",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+
+st.set_page_config(page_title="GLUCO-LENS", page_icon="🩺", layout="wide",
+                   initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -142,6 +141,8 @@ html, body, [data-testid="stAppViewContainer"] {
 }
 .topbar-sub { font-size: 13px; color: #94a3b8; letter-spacing: 1px; margin-top:2px; }
 @keyframes shimmer { 0%{background-position:0%} 100%{background-position:200%} }
+
+/* QR Scanner overlay */
 .scan-zone {
     background: rgba(99,102,241,0.06);
     border: 2px dashed rgba(99,102,241,0.4);
@@ -270,7 +271,7 @@ hr { border-color:rgba(255,255,255,0.06) !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ─── SESSION STATE ─────────────────────────────────────────────────────────────
+# SESSION STATE
 
 _defaults = dict(
     logged_in=False, role=None, username=None,
@@ -282,7 +283,7 @@ for k, v in _defaults.items():
         st.session_state[k] = v
 
 
-# ─── SUPABASE ──────────────────────────────────────────────────────────────────
+# SUPABASE
 
 @st.cache_resource
 def get_supabase():
@@ -314,45 +315,62 @@ def db_upsert(row: dict) -> bool:
             st.error(f"DB write error: {e}")
     return False
 
-def _demo_df() -> pd.DataFrame:
-    """Minimal demo dataset — used only when Supabase is not connected."""
-    return pd.DataFrame([
-        {"patient_id": "P001", "name": "Demo Patient", "age": 45, "gender": "Male",
-         "bmi": 28.5, "hba1c": 6.2, "fasting_blood_sugar": 118,
-         "cholesterol_total": 195, "systolic_bp": 130, "diastolic_bp": 82,
-         "hypertension": 1, "heart_disease": 0,
-         "smoking_history": "former", "family_history_diabetes": 1,
-         "diagnosis": "Pre-diabetic", "doctor_remarks": "Monitor closely."},
-    ])
+# JWT SECURE QR SECTION
 
-
-# ─── JWT / SECURE QR ──────────────────────────────────────────────────────────
+def _hmac_sign(payload_b64: str) -> str:
+    """Fallback HMAC signing when PyJWT is unavailable."""
+    return hmac.new(JWT_SECRET.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
 
 def generate_secure_qr(patient_id: str) -> str:
+    """
+    Generate a JWT-signed QR code for a patient.
+
+    TOKEN STRUCTURE:
+        Header  : {"alg": "HS256", "typ": "JWT"}
+        Payload : {"patient_id": "P001", "role": "patient",
+                   "iat": <issued_at>, "exp": <expiry>}
+        Signature: HMAC-SHA256(base64(header).base64(payload), JWT_SECRET)
+
+    SECURITY MODEL:
+        • QR contains only the signed token — patient_id is NOT readable
+          without the secret key (it's base64 encoded, not encrypted, but
+          the signature prevents tampering).
+        • Expired tokens are automatically rejected on verify.
+        • Revoking access = regenerating QR (old token expires naturally).
+    """
     now = datetime.now(tz=timezone.utc)
     exp = now + timedelta(days=JWT_EXPIRY_DAYS)
+
     payload = {
         "patient_id": patient_id,
-        "role": "patient",
-        "iat": int(now.timestamp()),
-        "exp": int(exp.timestamp()),
+        "role":       "patient",
+        "iat":        int(now.timestamp()),
+        "exp":        int(exp.timestamp()),
     }
+
     if JWT_AVAILABLE:
         token = pyjwt.encode(payload, JWT_SECRET, algorithm="HS256")
     else:
+        # Pure-Python fallback — RFC 7519 compliant manual JWT
         def b64url(data):
             if isinstance(data, str):
                 data = data.encode()
             return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
-        header  = b64url(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")))
-        body    = b64url(json.dumps(payload, separators=(",", ":")))
+
+        header  = b64url(json.dumps({"alg":"HS256","typ":"JWT"}, separators=(',',':')))
+        body    = b64url(json.dumps(payload, separators=(',',':')))
         signing = f"{header}.{body}"
         sig     = hmac.new(JWT_SECRET.encode(), signing.encode(), hashlib.sha256).digest()
         token   = f"{signing}.{b64url(sig)}"
 
+    # Write QR image
     path = os.path.join(QR_FOLDER, f"{patient_id}_jwt.png")
-    qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_M,
-                       box_size=8, border=3)
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=8,
+        border=3
+    )
     qr.add_data(token)
     qr.make(fit=True)
     img = qr.make_image(fill_color="#6366f1", back_color="white")
@@ -361,8 +379,23 @@ def generate_secure_qr(patient_id: str) -> str:
 
 
 def verify_qr_token(token: str) -> dict | None:
+    """
+    Verify and decode a JWT from a scanned QR code.
+
+    Returns dict with {patient_id, role, exp, iat} on success.
+    Returns None on failure (expired, invalid signature, malformed).
+
+    VERIFICATION STEPS:
+        1. Split token into header.payload.signature
+        2. Re-compute expected signature with our secret
+        3. Compare signatures with constant-time hmac.compare_digest
+           (prevents timing attacks)
+        4. Check expiry timestamp
+        5. Confirm role == "patient"
+    """
     if not token or not isinstance(token, str):
         return None
+
     try:
         if JWT_AVAILABLE:
             payload = pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
@@ -370,6 +403,7 @@ def verify_qr_token(token: str) -> dict | None:
                 return None
             return payload
         else:
+            # Manual fallback verify
             parts = token.split(".")
             if len(parts) != 3:
                 return None
@@ -378,12 +412,15 @@ def verify_qr_token(token: str) -> dict | None:
             expected_sig = hmac.new(
                 JWT_SECRET.encode(), signing.encode(), hashlib.sha256
             ).digest()
+            # decode incoming sig
             pad = 4 - len(sig_b64) % 4
             actual_sig = base64.urlsafe_b64decode(sig_b64 + "=" * (pad % 4))
             if not hmac.compare_digest(expected_sig, actual_sig):
                 return None
+            # decode payload
             pad = 4 - len(body_b64) % 4
             payload = json.loads(base64.urlsafe_b64decode(body_b64 + "=" * (pad % 4)))
+            # check expiry
             if payload.get("exp", 0) < time.time():
                 return None
             if payload.get("role") != "patient":
@@ -394,6 +431,10 @@ def verify_qr_token(token: str) -> dict | None:
 
 
 def qr_from_image_file(pil_img) -> str | None:
+    """
+    Decode a QR token from an uploaded PIL image.
+    Uses pyzbar if available; falls back to a pure-Python zxing-style attempt.
+    """
     if PYZBAR_AVAILABLE:
         try:
             arr = np.array(pil_img.convert("RGB"))
@@ -404,398 +445,212 @@ def qr_from_image_file(pil_img) -> str | None:
         except Exception:
             pass
     return None
+    
+# ML MODEL
 
+@st.cache_resource(show_spinner="🧠 Loading / training ML model…")
+def load_or_train_model():
+    if os.path.exists(MODEL_PATH) and os.path.exists(SCALER_PATH):
+        try:
+            model  = joblib.load(MODEL_PATH)
+            scaler = joblib.load(SCALER_PATH)
+            feats  = list(getattr(model, "feature_names_in_", ML_FEATURES))
+            return model, scaler, feats, None, "loaded"
+        except Exception:
+            pass
 
-# ─── ML MODEL LOADING ─────────────────────────────────────────────────────────
-#
-# BUG FIX #6  — Removed ALL RandomForest fallback training logic.
-#               Old code would silently generate 8 000 synthetic rows and
-#               train a RandomForestClassifier whenever the pkl was missing,
-#               masking the real error and producing bogus predictions with a
-#               completely different feature space.
-#
-# BUG FIX #7  — Removed SCALER_PATH / StandardScaler logic entirely.
-#               XGBoost is a tree-based model; it does not require feature
-#               scaling.  Passing data through a StandardScaler trained on
-#               synthetic data would corrupt every real prediction.
-#
-# BUG FIX #8  — Added loading of feature_columns.pkl so the EXACT column
-#               order used during training is preserved at inference time.
-#               Without this, column permutation silently produces wrong
-#               predictions without raising any exception.
-#
-# ARCHITECTURE NOTE:
-#   RF + StandardScaler pipeline:  raw_vec → scaler.transform() → model.predict_proba()
-#   XGBoost pd.get_dummies pipeline: raw_dict → preprocess_input() → model.predict_proba()
-#   The key difference is that get_dummies converts categoricals into binary
-#   columns, so we must recreate that exact binary column set at inference time
-#   rather than label-encoding or scaling.
+    np.random.seed(42)
+    N = 8000
+    age = np.random.normal(50,15,N).clip(18,90);   bmi = np.random.normal(27,6,N).clip(15,55)
+    hba = np.random.normal(5.8,1.2,N).clip(4,14);  fbs = np.random.normal(110,35,N).clip(60,400)
+    sbp = np.random.normal(128,20,N).clip(80,220);  dbp = np.random.normal(82,12,N).clip(50,130)
+    chol= np.random.normal(195,40,N).clip(100,400); ldl = chol*np.random.uniform(0.45,0.65,N)
+    hdl = np.random.normal(50,12,N).clip(20,100);   tg  = np.random.normal(150,60,N).clip(50,500)
+    creat=np.random.normal(0.95,0.25,N).clip(0.4,3);bun = np.random.normal(16,5,N).clip(5,60)
+    smoke=np.random.binomial(1,0.22,N);  alc=np.random.uniform(0,5,N); pa=np.random.uniform(0,5,N)
+    diet=np.random.uniform(0,5,N);       sleep=np.random.uniform(4,9,N)
+    fam=np.random.binomial(1,0.30,N);    gest=np.random.binomial(1,0.08,N)
+    pcos=np.random.binomial(1,0.07,N);   prev=np.random.binomial(1,0.18,N)
+    hyp=np.random.binomial(1,0.30,N);    antihyp=np.random.binomial(1,0.25,N)
+    statins=np.random.binomial(1,0.20,N);antidiab=np.random.binomial(1,0.15,N)
+    freq_ur=np.random.binomial(1,0.20,N);ex_thr=np.random.binomial(1,0.15,N)
+    wt_loss=np.random.binomial(1,0.12,N);fatigue=np.random.uniform(0,5,N)
+    blur=np.random.binomial(1,0.12,N);   sores=np.random.binomial(1,0.10,N)
+    tingle=np.random.binomial(1,0.14,N); qol=np.random.uniform(0,100,N)
+    mcu=np.random.uniform(0,5,N);        madh=np.random.uniform(0,5,N)
+    hlitt=np.random.uniform(0,5,N);      gender=np.random.binomial(1,0.50,N)
 
-@st.cache_resource(show_spinner="🧠 Loading XGBoost model…")
-def load_model():
-    """
-    Load the pre-trained XGBoost model and the saved feature column list.
-    Raises a clear error if either artefact is missing so the developer
-    knows exactly what to fix rather than silently falling back to garbage.
-    """
-    if not os.path.exists(MODEL_PATH):
-        st.error(
-            f"❌ Model file not found: `{MODEL_PATH}`\n\n"
-            "Run your training script to generate `models/diabetes_xgb.pkl` "
-            "and `models/feature_columns.pkl` first."
-        )
-        st.stop()
+    score = ((hba-4.5)*0.40 + (fbs-70)*0.0025 + (bmi-18)*0.035 + (age-18)*0.010
+             + (sbp-90)*0.008 + fam*0.55 + smoke*0.30 + prev*0.50
+             + hyp*0.25 + gest*0.45 + pcos*0.40 - pa*0.08 - diet*0.06)
+    prob_t = 1/(1+np.exp(-(score-3.5)))
+    label  = (np.random.uniform(0,1,N) < prob_t).astype(int)
 
-    if not os.path.exists(FEATURE_PATH):
-        st.error(
-            f"❌ Feature columns file not found: `{FEATURE_PATH}`\n\n"
-            "Your training script must save `joblib.dump(list(X.columns), 'models/feature_columns.pkl')`."
-        )
-        st.stop()
+    X = np.column_stack([age,gender,bmi,smoke,alc,pa,diet,sleep,fam,gest,pcos,prev,hyp,
+                         sbp,dbp,fbs,hba,creat,bun,chol,ldl,hdl,tg,antihyp,statins,
+                         antidiab,freq_ur,ex_thr,wt_loss,fatigue,blur,sores,tingle,
+                         qol,mcu,madh,hlitt])
 
-    model    = joblib.load(MODEL_PATH)
-    features = joblib.load(FEATURE_PATH)   # list of str, exact training column order
-    return model, features
-
-
-MODEL, FEATURE_COLUMNS = load_model()
-
-
-# ─── PREPROCESSING (XGBoost / pd.get_dummies compatible) ──────────────────────
-#
-# BUG FIX #9  — Completely rewrote patient_to_feature_vec().
-#               Old function built a numpy array by iterating ML_FEATURES
-#               (a hard-coded list that did NOT match the XGBoost training
-#               columns).  It also tried to call SCALER.transform() on the
-#               result, which crashed because SCALER no longer exists.
-#
-# HOW pd.get_dummies ENCODING WORKS AT INFERENCE TIME:
-#   Training used:
-#       df = pd.get_dummies(df, columns=["gender", "smoking_history"], drop_first=True)
-#   This produced binary columns like:
-#       gender_Male, gender_Other,
-#       smoking_history_current, smoking_history_ever, smoking_history_former,
-#       smoking_history_never, smoking_history_not current
-#   (drop_first=True dropped gender_Female and smoking_history_No Info)
-#
-#   At inference we must:
-#   1. Accept the raw string values for gender / smoking_history.
-#   2. Manually set the matching binary column to 1, all others to 0.
-#   3. Build a DataFrame with EXACTLY the columns in FEATURE_COLUMNS.
-#   4. Fill any missing columns with 0 (safety net for unseen dummies).
-#   5. Reorder columns to match FEATURE_COLUMNS exactly.
-#
-# WHY COLUMN ORDER MATTERS FOR XGBOOST:
-#   XGBoost stores feature importances / split thresholds indexed by column
-#   position, not by name (unless feature_names are enforced).  A mismatch
-#   silently produces wrong predictions.
-
-# Known dummy columns generated by pd.get_dummies(drop_first=True)
-# on ("gender", "smoking_history").
-# drop_first removes the alphabetically-first level of each column:
-#   gender          → drops "Female"  → keeps Male, Other
-#   smoking_history → drops "No Info" → keeps current, ever, former, never, not current
-
-_GENDER_DUMMIES = {
-    "Male":   {"gender_Male": 1, "gender_Other": 0},
-    "Female": {"gender_Male": 0, "gender_Other": 0},   # dropped (baseline)
-    "Other":  {"gender_Male": 0, "gender_Other": 1},
-}
-
-_SMOKING_DUMMIES = {
-    "current":     {"smoking_history_current": 1, "smoking_history_ever": 0,
-                    "smoking_history_former": 0, "smoking_history_never": 0,
-                    "smoking_history_not current": 0},
-    "ever":        {"smoking_history_current": 0, "smoking_history_ever": 1,
-                    "smoking_history_former": 0, "smoking_history_never": 0,
-                    "smoking_history_not current": 0},
-    "former":      {"smoking_history_current": 0, "smoking_history_ever": 0,
-                    "smoking_history_former": 1, "smoking_history_never": 0,
-                    "smoking_history_not current": 0},
-    "never":       {"smoking_history_current": 0, "smoking_history_ever": 0,
-                    "smoking_history_former": 0, "smoking_history_never": 1,
-                    "smoking_history_not current": 0},
-    "not current": {"smoking_history_current": 0, "smoking_history_ever": 0,
-                    "smoking_history_former": 0, "smoking_history_never": 0,
-                    "smoking_history_not current": 1},
-    "No Info":     {"smoking_history_current": 0, "smoking_history_ever": 0,
-                    "smoking_history_former": 0, "smoking_history_never": 0,
-                    "smoking_history_not current": 0},   # dropped (baseline)
-}
-
-
-def preprocess_input(patient: dict) -> pd.DataFrame:
-    """
-    Convert a raw patient dict (from the DB or the Add-Patient form) into a
-    single-row DataFrame that exactly matches the feature space the XGBoost
-    model was trained on.
-
-    Steps
-    -----
-    1. Extract numeric fields that were NOT dummified.
-    2. Resolve gender  → binary dummy columns via _GENDER_DUMMIES.
-    3. Resolve smoking → binary dummy columns via _SMOKING_DUMMIES.
-    4. Build a flat dict of all features, default 0 for anything missing.
-    5. Create a one-row DataFrame.
-    6. Add any columns that are in FEATURE_COLUMNS but absent in the dict
-       (fills with 0 — safe default for binary dummies).
-    7. Reorder columns to exactly match FEATURE_COLUMNS.
-
-    Parameters
-    ----------
-    patient : dict
-        Raw record from Supabase / demo data / Add-Patient form.
-        Keys may use snake_case (from DB) or CamelCase (legacy).
-
-    Returns
-    -------
-    pd.DataFrame  shape (1, len(FEATURE_COLUMNS))
-    """
-
-    def _get(keys, default=0.0):
-        """Try multiple key spellings; return float or default."""
-        for k in keys:
-            if k in patient and patient[k] is not None and patient[k] != "":
-                try:
-                    return float(patient[k])
-                except (ValueError, TypeError):
-                    pass
-        return float(default)
-
-    # ── 1. Numeric / binary features (no dummification needed) ────────────────
-    row = {
-        "age":                  _get(["age", "Age"]),
-        "hypertension":         _get(["hypertension", "Hypertension"]),
-        "heart_disease":        _get(["heart_disease", "HeartDisease"]),
-        "bmi":                  _get(["bmi", "BMI"]),
-        "HbA1c_level":          _get(["hba1c", "HbA1c", "hba1c_level", "HbA1c_level"]),
-        "blood_glucose_level":  _get(["fasting_blood_sugar", "FastingBloodSugar",
-                                      "blood_glucose_level", "BloodGlucoseLevel"]),
-    }
-
-    # ── 2. Gender → dummies ───────────────────────────────────────────────────
-    # Accept numeric (1=Male/0=Female legacy) or string ("Male"/"Female"/"Other")
-    raw_gender = patient.get("gender", patient.get("Gender", "Female"))
-    if isinstance(raw_gender, (int, float)):
-        gender_str = "Male" if int(raw_gender) == 1 else "Female"
-    else:
-        gender_str = str(raw_gender).strip().capitalize()
-        # Normalize common variants
-        if gender_str.lower() in ("m", "male"):
-            gender_str = "Male"
-        elif gender_str.lower() in ("f", "female"):
-            gender_str = "Female"
-        else:
-            gender_str = "Other"
-
-    row.update(_GENDER_DUMMIES.get(gender_str, _GENDER_DUMMIES["Female"]))
-
-    # ── 3. Smoking history → dummies ─────────────────────────────────────────
-    raw_smoking = patient.get("smoking_history", patient.get("SmokingHistory",
-                  patient.get("smoking", "No Info")))
-    # Legacy binary encoding (1=smoker, 0=non-smoker) → map to string
-    if isinstance(raw_smoking, (int, float)):
-        smoking_str = "current" if int(raw_smoking) == 1 else "never"
-    else:
-        smoking_str = str(raw_smoking).strip().lower()
-        # Normalise UI / DB variants
-        _smoke_map = {
-            "yes": "current", "no": "never", "former": "former",
-            "current": "current", "ever": "ever", "never": "never",
-            "not current": "not current", "no info": "No Info", "": "No Info",
-        }
-        smoking_str = _smoke_map.get(smoking_str, "No Info")
-
-    row.update(_SMOKING_DUMMIES.get(smoking_str, _SMOKING_DUMMIES["No Info"]))
-
-    # ── 4. Build DataFrame ────────────────────────────────────────────────────
-    df = pd.DataFrame([row])
-
-    # ── 5. Add any missing columns (safety net) ───────────────────────────────
-    for col in FEATURE_COLUMNS:
-        if col not in df.columns:
-            df[col] = 0
-
-    # ── 6. Reorder to EXACT training column order ─────────────────────────────
-    # BUG FIX #10: Old code never reordered.  XGBoost split thresholds are
-    # positional — wrong order = completely wrong predictions, silently.
-    df = df[FEATURE_COLUMNS]
-
-    return df
-
-
-def predict_prob(patient: dict) -> tuple[float, str]:
-    """
-    Return (probability_of_diabetes, source_label).
-
-    Uses the loaded XGBoost model via preprocess_input().
-    Falls back to a transparent heuristic ONLY if the model call itself raises
-    an unexpected exception (not as a replacement for a missing model).
-
-    BUG FIX #11: Old predict_prob() called SCALER.transform() which no longer
-    exists in the XGBoost pipeline.  Removed entirely.  XGBoost tree models
-    are scale-invariant; raw feature values are passed directly.
-    """
+    X_tr,X_te,y_tr,y_te = train_test_split(X,label,test_size=0.2,random_state=42)
+    scaler = StandardScaler()
+    X_tr_s = scaler.fit_transform(X_tr);  X_te_s = scaler.transform(X_te)
+    model  = RandomForestClassifier(n_estimators=300,max_depth=12,
+                                    min_samples_leaf=5,n_jobs=-1,random_state=42)
+    model.fit(X_tr_s,y_tr)
+    acc = accuracy_score(y_te,model.predict(X_te_s))
+    model.feature_names_in_ = np.array(ML_FEATURES)
     try:
-        df = preprocess_input(patient)
-        prob = float(MODEL.predict_proba(df)[0][1])
-        return round(prob, 4), "xgboost"
-    except Exception as exc:
-        # Transparent fallback — log the error and use clinical heuristic
-        st.warning(f"⚠️ Model prediction failed ({exc}). Using clinical heuristic.")
-        hba = _safe_float(patient.get("hba1c", patient.get("HbA1c", 5.5)))
-        fbs = _safe_float(patient.get("fasting_blood_sugar",
-                          patient.get("FastingBloodSugar", 100)))
-        p = min(1.0, max(0.0, (hba - 4.5) / 6.0 * 0.6 + (fbs - 70) / 200.0 * 0.4))
-        return round(p, 4), "heuristic"
+        joblib.dump(model,MODEL_PATH); joblib.dump(scaler,SCALER_PATH)
+    except Exception:
+        pass
+    return model, scaler, ML_FEATURES, round(acc*100,1), "trained"
 
+MODEL, SCALER, FEATURES, MODEL_ACC, MODEL_SRC = load_or_train_model()
 
-# ─── HELPER UTILS ─────────────────────────────────────────────────────────────
+# ML UTILS
 
-def _safe_float(x, default=0.0) -> float:
-    """Convert x to float safely; return default on failure."""
+def sf(x, d=0.0):
     try:
-        if x is None or x == "" or (isinstance(x, float) and np.isnan(x)):
-            return float(default)
+        if x is None or x=="" or (isinstance(x,float) and np.isnan(x)):
+            return float(d)
         return float(x)
     except Exception:
-        return float(default)
+        return float(d)
 
-# Keep backward-compatible alias used in legacy call-sites
-sf = _safe_float
+def patient_to_feature_vec(rec):
+    mapping = {
+        "Age":["age","Age"],"Gender":["gender","Gender"],"BMI":["bmi","BMI"],
+        "Smoking":["smoking","Smoking"],"AlcoholConsumption":["alcohol_consumption","AlcoholConsumption"],
+        "PhysicalActivity":["physical_activity","PhysicalActivity"],"DietQuality":["diet_quality","DietQuality"],
+        "SleepQuality":["sleep_quality","SleepQuality"],"FamilyHistoryDiabetes":["family_history_diabetes","FamilyHistoryDiabetes"],
+        "GestationalDiabetes":["gestational_diabetes","GestationalDiabetes"],
+        "PolycysticOvarySyndrome":["polycystic_ovary_syndrome","PolycysticOvarySyndrome","pcos"],
+        "PreviousPreDiabetes":["previous_pre_diabetes","PreviousPreDiabetes"],
+        "Hypertension":["hypertension","Hypertension"],"SystolicBP":["systolic_bp","SystolicBP"],
+        "DiastolicBP":["diastolic_bp","DiastolicBP"],"FastingBloodSugar":["fasting_blood_sugar","FastingBloodSugar"],
+        "HbA1c":["hba1c","HbA1c"],"SerumCreatinine":["serum_creatinine","SerumCreatinine"],
+        "BUNLevels":["bun_levels","BUNLevels"],"CholesterolTotal":["cholesterol_total","CholesterolTotal"],
+        "CholesterolLDL":["cholesterol_ldl","CholesterolLDL"],"CholesterolHDL":["cholesterol_hdl","CholesterolHDL"],
+        "CholesterolTriglycerides":["cholesterol_triglycerides","CholesterolTriglycerides"],
+        "AntihypertensiveMedications":["antihypertensive_medications","AntihypertensiveMedications"],
+        "Statins":["statins","Statins"],"AntidiabeticMedications":["antidiabetic_medications","AntidiabeticMedications"],
+        "FrequentUrination":["frequent_urination","FrequentUrination"],"ExcessiveThirst":["excessive_thirst","ExcessiveThirst"],
+        "UnexplainedWeightLoss":["unexplained_weight_loss","UnexplainedWeightLoss"],
+        "FatigueLevels":["fatigue_levels","FatigueLevels"],"BlurredVision":["blurred_vision","BlurredVision"],
+        "SlowHealingSores":["slow_healing_sores","SlowHealingSores"],"TinglingHandsFeet":["tingling_hands_feet","TinglingHandsFeet"],
+        "QualityOfLifeScore":["quality_of_life_score","QualityOfLifeScore"],
+        "MedicalCheckupsFrequency":["medical_checkups_frequency","MedicalCheckupsFrequency"],
+        "MedicationAdherence":["medication_adherence","MedicationAdherence"],
+        "HealthLiteracy":["health_literacy","HealthLiteracy"],
+    }
+    vec = []
+    for feat in FEATURES:
+        keys = mapping.get(feat,[feat.lower(),feat])
+        val  = None
+        for k in keys:
+            if k in rec: val=rec[k]; break
+        vec.append(sf(val))
+    return np.array(vec,dtype=float)
 
+def predict_prob(rec):
+    vec = patient_to_feature_vec(rec).reshape(1,-1)
+    try:
+        return float(MODEL.predict_proba(SCALER.transform(vec))[0][1]), "model"
+    except Exception:
+        hba = sf(rec.get("hba1c",rec.get("HbA1c",5.5)))
+        fbs = sf(rec.get("fasting_blood_sugar",rec.get("FastingBloodSugar",100)))
+        p   = min(1.0,max(0.0,(hba-4.5)/6.0*0.6+(fbs-70)/200.0*0.4))
+        return round(p,4), "heuristic"
 
-def risk_tier(p: float) -> tuple[str, str, str]:
-    if p >= 0.65: return "High",     "#f87171", "🔴"
-    if p >= 0.35: return "Moderate", "#fbbf24", "🟡"
-    return "Low", "#34d399", "🟢"
+def risk_tier(p):
+    if p>=0.65: return "High","#f87171","🔴"
+    if p>=0.35: return "Moderate","#fbbf24","🟡"
+    return "Low","#34d399","🟢"
 
-
-def simulate_projection(rec: dict, years: int = 5) -> list[float]:
-    """Project risk over `years` years by nudging BMI and glucose upward."""
-    pts = []
-    for y in range(1, years + 1):
-        m = dict(rec)
-        m["bmi"]                 = str(_safe_float(m.get("bmi", 25)) + 0.25 * y)
-        m["fasting_blood_sugar"] = str(_safe_float(m.get("fasting_blood_sugar", 100)) + 2 * y)
-        p, _ = predict_prob(m)
-        pts.append(round(p * 100, 1))
+def simulate_projection(rec,years=5):
+    pts=[]
+    for y in range(1,years+1):
+        m=dict(rec)
+        m["bmi"]=str(sf(m.get("bmi",25))+0.25*y)
+        m["fasting_blood_sugar"]=str(sf(m.get("fasting_blood_sugar",100))+2*y)
+        p,_=predict_prob(m); pts.append(round(p*100,1))
     return pts
 
+def ai_summary(rec,prob):
+    hba=sf(rec.get("hba1c",rec.get("HbA1c",5.5)));bmi=sf(rec.get("bmi",rec.get("BMI",25)))
+    hs="normal" if hba<5.7 else ("pre-diabetes" if hba<6.5 else "diabetes range")
+    bs="healthy" if bmi<25 else ("overweight" if bmi<30 else "obese")
+    tier,_,icon=risk_tier(prob)
+    msgs={"Low":f"HbA1c {hba:.1f}% ({hs}), BMI {bmi:.1f} ({bs}). Maintain current lifestyle; annual screening recommended.",
+          "Moderate":f"HbA1c {hba:.1f}% ({hs}), BMI {bmi:.1f} ({bs}). Dietary adjustment and increased physical activity advised. Follow-up in 3–6 months.",
+          "High":f"HbA1c {hba:.1f}% ({hs}), BMI {bmi:.1f} ({bs}). Urgent clinical review, medication assessment and lifestyle intervention recommended."}
+    proj=simulate_projection(rec)
+    return f"{icon} **{tier} Risk ({prob*100:.1f}%)** — {msgs[tier]} Projected 5-yr: {' → '.join(str(x)+'%' for x in proj)}"
 
-def ai_summary(rec: dict, prob: float) -> str:
-    hba  = _safe_float(rec.get("hba1c", rec.get("HbA1c", 5.5)))
-    bmi  = _safe_float(rec.get("bmi",   rec.get("BMI",   25.0)))
-    hs   = "normal" if hba < 5.7 else ("pre-diabetes range" if hba < 6.5 else "diabetes range")
-    bs   = "healthy" if bmi < 25 else ("overweight" if bmi < 30 else "obese")
-    tier, _, icon = risk_tier(prob)
-    msgs = {
-        "Low":      f"HbA1c {hba:.1f}% ({hs}), BMI {bmi:.1f} ({bs}). Maintain current lifestyle; annual screening recommended.",
-        "Moderate": f"HbA1c {hba:.1f}% ({hs}), BMI {bmi:.1f} ({bs}). Dietary adjustment and increased physical activity advised. Follow-up in 3–6 months.",
-        "High":     f"HbA1c {hba:.1f}% ({hs}), BMI {bmi:.1f} ({bs}). Urgent clinical review, medication assessment and lifestyle intervention recommended.",
-    }
-    proj = simulate_projection(rec)
-    return f"{icon} **{tier} Risk ({prob * 100:.1f}%)** — {msgs[tier]} Projected 5-yr: {' → '.join(str(x) + '%' for x in proj)}"
+def fmt(v,decimals=2):
+    if v is None or v=="": return "—"
+    try: return f"{float(v):.{decimals}f}"
+    except: return str(v)
 
-
-def fmt(v, decimals: int = 2) -> str:
-    if v is None or v == "":
-        return "—"
-    try:
-        return f"{float(v):.{decimals}f}"
-    except Exception:
-        return str(v)
-
-
-# ─── CHARTS ───────────────────────────────────────────────────────────────────
-
-def gauge_chart(prob: float):
-    tier, color, _ = risk_tier(prob)
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number+delta", value=round(prob * 100, 1),
-        number={"suffix": "%", "font": {"color": "white", "family": "Outfit", "size": 36}},
-        delta={"reference": 50, "increasing": {"color": "#f87171"}, "decreasing": {"color": "#34d399"}},
-        gauge={
-            "axis": {"range": [0, 100], "tickcolor": "#475569", "tickfont": {"color": "#475569"}},
-            "bar": {"color": color, "thickness": 0.25},
-            "bgcolor": "rgba(0,0,0,0)",
-            "bordercolor": "rgba(0,0,0,0)",
-            "steps": [
-                {"range": [0,  35], "color": "rgba(52,211,153,0.08)"},
-                {"range": [35, 65], "color": "rgba(251,191,36,0.08)"},
-                {"range": [65,100], "color": "rgba(248,113,113,0.08)"},
-            ],
-            "threshold": {"line": {"color": color, "width": 3}, "value": prob * 100},
-        },
-        title={"text": f"<b>{tier} Risk</b>", "font": {"color": color, "family": "Outfit", "size": 16}},
-    ))
-    fig.update_layout(height=260, margin=dict(t=40, b=10, l=20, r=20),
-                      paper_bgcolor="rgba(0,0,0,0)", font=dict(color="white"))
+# Charts
+def gauge_chart(prob):
+    tier,color,_=risk_tier(prob)
+    fig=go.Figure(go.Indicator(
+        mode="gauge+number+delta",value=round(prob*100,1),
+        number={"suffix":"%","font":{"color":"white","family":"Outfit","size":36}},
+        delta={"reference":50,"increasing":{"color":"#f87171"},"decreasing":{"color":"#34d399"}},
+        gauge={"axis":{"range":[0,100],"tickcolor":"#475569","tickfont":{"color":"#475569"}},
+               "bar":{"color":color,"thickness":0.25},"bgcolor":"rgba(0,0,0,0)",
+               "bordercolor":"rgba(0,0,0,0)",
+               "steps":[{"range":[0,35],"color":"rgba(52,211,153,0.08)"},
+                        {"range":[35,65],"color":"rgba(251,191,36,0.08)"},
+                        {"range":[65,100],"color":"rgba(248,113,113,0.08)"}],
+               "threshold":{"line":{"color":color,"width":3},"value":prob*100}},
+        title={"text":f"<b>{tier} Risk</b>","font":{"color":color,"family":"Outfit","size":16}}))
+    fig.update_layout(height=260,margin=dict(t=40,b=10,l=20,r=20),
+                      paper_bgcolor="rgba(0,0,0,0)",font=dict(color="white"))
     return fig
 
+def proj_chart(pts):
+    colors=["#34d399" if p<35 else("#fbbf24" if p<65 else"#f87171") for p in pts]
+    fig=go.Figure()
+    fig.add_trace(go.Scatter(x=list(range(1,6)),y=pts,mode="lines+markers",
+        line=dict(color="#6366f1",width=3,shape="spline"),
+        marker=dict(size=10,color=colors,line=dict(color="rgba(255,255,255,0.2)",width=2)),
+        fill="tozeroy",fillcolor="rgba(99,102,241,0.06)",name="Risk %"))
+    fig.add_hline(y=65,line=dict(color="#f87171",dash="dot",width=1),
+                  annotation_text="High",annotation_font_color="#f87171")
+    fig.add_hline(y=35,line=dict(color="#fbbf24",dash="dot",width=1),
+                  annotation_text="Moderate",annotation_font_color="#fbbf24")
+    fig.update_layout(title=dict(text="5-Year Risk Projection",font=dict(color="#94a3b8",size=14)),
+        xaxis=dict(title="Year",tickvals=list(range(1,6)),gridcolor="rgba(255,255,255,0.04)",color="#64748b"),
+        yaxis=dict(title="Risk %",range=[0,100],gridcolor="rgba(255,255,255,0.04)",color="#64748b"),
+        paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="white"),height=260,margin=dict(t=40,b=20,l=20,r=20),showlegend=False)
+    return fig
 
-def proj_chart(pts: list[float]):
-    colors = ["#34d399" if p < 35 else ("#fbbf24" if p < 65 else "#f87171") for p in pts]
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=list(range(1, 6)), y=pts, mode="lines+markers",
-        line=dict(color="#6366f1", width=3, shape="spline"),
-        marker=dict(size=10, color=colors, line=dict(color="rgba(255,255,255,0.2)", width=2)),
-        fill="tozeroy", fillcolor="rgba(99,102,241,0.06)", name="Risk %",
-    ))
-    fig.add_hline(y=65, line=dict(color="#f87171", dash="dot", width=1),
-                  annotation_text="High", annotation_font_color="#f87171")
-    fig.add_hline(y=35, line=dict(color="#fbbf24", dash="dot", width=1),
-                  annotation_text="Moderate", annotation_font_color="#fbbf24")
+def vitals_radar(rec):
+    cats=["HbA1c","BMI","BP","Cholesterol","Glucose","Age"]
+    vals=[min(sf(rec.get("hba1c",5.5))/14*100,100),min(sf(rec.get("bmi",25))/50*100,100),
+          min(sf(rec.get("systolic_bp",120))/200*100,100),min(sf(rec.get("cholesterol_total",180))/400*100,100),
+          min(sf(rec.get("fasting_blood_sugar",100))/300*100,100),min(sf(rec.get("age",40))/100*100,100)]
+    fig=go.Figure(go.Scatterpolar(r=vals+[vals[0]],theta=cats+[cats[0]],fill="toself",
+        fillcolor="rgba(99,102,241,0.12)",line=dict(color="#6366f1",width=2),
+        marker=dict(color="#a5b4fc",size=6)))
     fig.update_layout(
-        title=dict(text="5-Year Risk Projection", font=dict(color="#94a3b8", size=14)),
-        xaxis=dict(title="Year", tickvals=list(range(1, 6)),
-                   gridcolor="rgba(255,255,255,0.04)", color="#64748b"),
-        yaxis=dict(title="Risk %", range=[0, 100],
-                   gridcolor="rgba(255,255,255,0.04)", color="#64748b"),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="white"), height=260, margin=dict(t=40, b=20, l=20, r=20),
-        showlegend=False,
-    )
+        polar=dict(bgcolor="rgba(0,0,0,0)",
+            radialaxis=dict(visible=True,range=[0,100],gridcolor="rgba(255,255,255,0.06)",
+                            tickfont=dict(color="#475569",size=9)),
+            angularaxis=dict(gridcolor="rgba(255,255,255,0.06)",tickfont=dict(color="#94a3b8",size=11))),
+        paper_bgcolor="rgba(0,0,0,0)",font=dict(color="white"),
+        height=280,margin=dict(t=20,b=20,l=30,r=30),showlegend=False,
+        title=dict(text="Health Profile Radar",font=dict(color="#94a3b8",size=13)))
     return fig
 
-
-def vitals_radar(rec: dict):
-    cats = ["HbA1c", "BMI", "BP", "Cholesterol", "Glucose", "Age"]
-    vals = [
-        min(_safe_float(rec.get("hba1c",            rec.get("HbA1c",            5.5))) / 14 * 100, 100),
-        min(_safe_float(rec.get("bmi",              rec.get("BMI",              25)))  / 50 * 100, 100),
-        min(_safe_float(rec.get("systolic_bp",      rec.get("SystolicBP",       120))) / 200 * 100, 100),
-        min(_safe_float(rec.get("cholesterol_total",rec.get("CholesterolTotal", 180))) / 400 * 100, 100),
-        min(_safe_float(rec.get("fasting_blood_sugar",rec.get("FastingBloodSugar",100))) / 300 * 100, 100),
-        min(_safe_float(rec.get("age",              rec.get("Age",              40)))   / 100 * 100, 100),
-    ]
-    fig = go.Figure(go.Scatterpolar(
-        r=vals + [vals[0]], theta=cats + [cats[0]], fill="toself",
-        fillcolor="rgba(99,102,241,0.12)", line=dict(color="#6366f1", width=2),
-        marker=dict(color="#a5b4fc", size=6),
-    ))
-    fig.update_layout(
-        polar=dict(
-            bgcolor="rgba(0,0,0,0)",
-            radialaxis=dict(visible=True, range=[0, 100],
-                            gridcolor="rgba(255,255,255,0.06)",
-                            tickfont=dict(color="#475569", size=9)),
-            angularaxis=dict(gridcolor="rgba(255,255,255,0.06)",
-                             tickfont=dict(color="#94a3b8", size=11)),
-        ),
-        paper_bgcolor="rgba(0,0,0,0)", font=dict(color="white"),
-        height=280, margin=dict(t=20, b=20, l=30, r=30), showlegend=False,
-        title=dict(text="Health Profile Radar", font=dict(color="#94a3b8", size=13)),
-    )
-    return fig
-
-
-# ─── HEADER / SIDEBAR ─────────────────────────────────────────────────────────
-
-def render_header(subtitle: str = "Smart Diabetes EMR"):
-    sb_badge  = "🟢 Connected" if get_supabase() else "🟡 Demo Mode"
-    ml_badge  = "🧠 XGBoost · Loaded"
+# Header / Sidebar
+def render_header(subtitle="Smart Diabetes EMR"):
+    sb="🟢 Connected" if get_supabase() else "🟡 Demo Mode"
+    ml=f"🧠 {'Loaded' if MODEL_SRC=='loaded' else 'Auto-trained'}" + (f" · {MODEL_ACC}% acc" if MODEL_ACC else "")
     jwt_badge = "🔐 JWT QR Active" if JWT_AVAILABLE else "🔐 JWT (fallback)"
     st.markdown(f"""
     <div class="topbar">
@@ -805,56 +660,55 @@ def render_header(subtitle: str = "Smart Diabetes EMR"):
             <div class="topbar-sub">{subtitle}</div>
         </div>
         <div style="text-align:right;font-size:12px;color:#475569;line-height:2">
-            {sb_badge} &nbsp;·&nbsp; {ml_badge}<br>{jwt_badge}
+            {sb} &nbsp;·&nbsp; {ml}<br>{jwt_badge}
         </div>
-    </div>""", unsafe_allow_html=True)
-
+    </div>""",unsafe_allow_html=True)
 
 def render_sidebar():
     with st.sidebar:
-        role_icon = {"Admin": "👑", "Doctor": "👩‍⚕️", "Patient": "🫀"}.get(st.session_state.role, "")
+        role_icon = {"Admin":"👑","Doctor":"👩‍⚕️","Patient":"🫀"}.get(st.session_state.role,"")
         st.markdown(f"""
         <div class="sb-role">
             <div class="role-name">{role_icon} {st.session_state.role}</div>
             <div class="role-user">@{st.session_state.username or st.session_state.pat_pid}</div>
-        </div>""", unsafe_allow_html=True)
-        sb = get_supabase()
+        </div>""",unsafe_allow_html=True)
+        sb=get_supabase()
         st.markdown(f"""
         <div style="font-size:12px;color:#475569;margin-bottom:12px;
                     padding:8px 12px;background:rgba(255,255,255,0.02);border-radius:8px;">
             {'🟢 Supabase connected' if sb else '🟡 Demo data (add secrets to persist)'}
-        </div>""", unsafe_allow_html=True)
-        st.markdown("""
-        <div style="font-size:12px;color:#475569;margin-bottom:16px;padding:8px 12px;
-                    background:rgba(99,102,241,0.08);border-radius:8px;
-                    border:1px solid rgba(99,102,241,0.15)">
-            🧠 XGBoost model · Loaded
-        </div>""", unsafe_allow_html=True)
+        </div>""",unsafe_allow_html=True)
+        if MODEL_SRC=="trained":
+            st.markdown(f"""
+            <div style="font-size:12px;color:#475569;margin-bottom:16px;padding:8px 12px;
+                        background:rgba(99,102,241,0.08);border-radius:8px;
+                        border:1px solid rgba(99,102,241,0.15)">
+                🧠 RF auto-trained · {MODEL_ACC}% accuracy
+            </div>""",unsafe_allow_html=True)
         st.markdown("---")
-        if st.button("🚪 Logout", use_container_width=True):
-            for k in _defaults:
-                st.session_state[k] = _defaults[k]
+        if st.button("🚪 Logout",use_container_width=True):
+            for k in _defaults: st.session_state[k]=_defaults[k]
             st.rerun()
 
-
-# ─── LOGIN ────────────────────────────────────────────────────────────────────
+#  LOGIN SCREEN
 
 def show_login():
     render_header("Secure Healthcare Login")
-    _, mid, _ = st.columns([1, 1.4, 1])
+    _, mid, _ = st.columns([1,1.4,1])
     with mid:
-        st.markdown('<div class="login-card">', unsafe_allow_html=True)
-        st.markdown('<div class="login-logo">GLUCO-LENS</div>', unsafe_allow_html=True)
-        st.markdown('<div class="login-sub">Smart Diabetes EMR</div>', unsafe_allow_html=True)
+        st.markdown('<div class="login-card">',unsafe_allow_html=True)
+        st.markdown('<div class="login-logo">GLUCO-LENS</div>',unsafe_allow_html=True)
+        st.markdown('<div class="login-sub">Smart Diabetes EMR</div>',unsafe_allow_html=True)
 
         tab_staff, tab_patient = st.tabs(["👩‍⚕️ Staff Login", "📷 Patient QR Login"])
 
+        # ── Staff (Admin / Doctor) ───────────────────────────────────────────
         with tab_staff:
-            username = st.text_input("Username", placeholder="admin or doctor", key="li_user")
-            password = st.text_input("Password", type="password", key="li_pass")
-            if st.button("Sign In →", use_container_width=True, type="primary", key="li_btn"):
+            username = st.text_input("Username",placeholder="admin or doctor",key="li_user")
+            password = st.text_input("Password",type="password",key="li_pass")
+            if st.button("Sign In →",use_container_width=True,type="primary",key="li_btn"):
                 u = username.lower().strip()
-                if u in CREDENTIALS and CREDENTIALS[u]["password"] == password:
+                if u in CREDENTIALS and CREDENTIALS[u]["password"]==password:
                     st.session_state.logged_in = True
                     st.session_state.role      = CREDENTIALS[u]["role"]
                     st.session_state.username  = u
@@ -863,43 +717,51 @@ def show_login():
                     st.error("Invalid credentials.")
             st.markdown("""
             <div class="cred-badge">admin / admin123<br>doctor / doc123</div>
-            """, unsafe_allow_html=True)
+            """,unsafe_allow_html=True)
 
+        # ── Patient QR Login ─────────────────────────────────────────────────
         with tab_patient:
             _patient_qr_login_widget()
 
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>",unsafe_allow_html=True)
 
 
 def _patient_qr_login_widget():
+    """
+    Self-contained patient login block.
+    Tries WebRTC camera first; falls back to image upload; falls back to manual entry.
+    On successful JWT verification → auto-login.
+    """
+    # ── 1. Check if already scanned this session ─────────────────────────────
     raw_token = st.session_state.get("last_scanned_token")
     if raw_token and not st.session_state.logged_in:
         _attempt_jwt_login(raw_token)
         return
 
+    # ── 2. Fallback: image upload ─────────────────────────────────────────────
     st.markdown("""<div style="color:#64748b;font-size:12px;text-align:center;margin-bottom:8px;">
-        Upload your QR image to log in</div>""", unsafe_allow_html=True)
-    uploaded = st.file_uploader("Upload QR Image", type=["png", "jpg", "jpeg"],
-                                label_visibility="collapsed", key="qr_upload_login")
+        Or upload your QR image</div>""",unsafe_allow_html=True)
+    uploaded = st.file_uploader("Upload QR Image",type=["png","jpg","jpeg"],
+                                 label_visibility="collapsed",key="qr_upload_login")
     if uploaded:
-        img   = Image.open(uploaded)
+        img = Image.open(uploaded)
         token = qr_from_image_file(img)
         if token:
             st.session_state.last_scanned_token = token
             _attempt_jwt_login(token)
+            return
         else:
-            st.error("❌ Could not read QR. Ensure pyzbar/libzbar is installed.")
-
-
+            st.error("❌ Could not read QR code from image. Ensure pyzbar/libzbar is installed.")
 def _attempt_jwt_login(token: str):
+    """Verify JWT and auto-login the patient if valid."""
     payload = verify_qr_token(token)
     if payload:
-        pid    = payload.get("patient_id", "")
-        df     = db_fetch_all()
-        pid_col = next((c for c in df.columns if c.lower() == "patient_id"), None)
-        rec    = None
+        pid = payload.get("patient_id","")
+        df  = db_fetch_all()
+        pid_col = next((c for c in df.columns if c.lower()=="patient_id"),None)
+        rec = None
         if pid_col:
-            rows = df[df[pid_col].astype(str).str.strip() == pid]
+            rows = df[df[pid_col].astype(str).str.strip()==pid]
             if not rows.empty:
                 rec = rows.iloc[0].to_dict()
         if rec:
@@ -908,24 +770,25 @@ def _attempt_jwt_login(token: str):
             st.session_state.username   = None
             st.session_state.pat_pid    = pid
             st.session_state.pat_record = rec
-            st.session_state.last_scanned_token = None
-            st.markdown('<div class="success-badge">✅ Logged in securely via QR · Passwordless Auth</div>',
-                        unsafe_allow_html=True)
+            st.session_state.last_scanned_token = None   # consume token
+            st.markdown("""
+            <div class="success-badge">✅ Logged in securely via QR · Passwordless Authentication</div>
+            """,unsafe_allow_html=True)
             time.sleep(0.8)
             st.rerun()
         else:
             st.error("⚠️ QR verified but patient record not found.")
+
     else:
-        st.error("❌ Invalid or expired QR token.")
+        st.error("❌ Invalid or expired QR token. Please request a new QR from admin.")
         st.session_state.last_scanned_token = None
 
+#  PATIENT RECORD 
 
-# ─── PATIENT RECORD RENDERER ──────────────────────────────────────────────────
-
-def _render_patient_record(rec: dict, pid: str):
+def _render_patient_record(rec, pid):
     prob, src = predict_prob(rec)
     tier, color, icon = risk_tier(prob)
-    name = rec.get("name", rec.get("Name", pid))
+    name = rec.get("name",rec.get("Name",pid))
 
     st.markdown(f"""
     <div class="glass" style="border-left:3px solid {color};">
@@ -936,406 +799,316 @@ def _render_patient_record(rec: dict, pid: str):
             </div>
             <div style="text-align:center;background:rgba(255,255,255,0.04);border-radius:16px;
                         padding:16px 28px;border:1px solid rgba(255,255,255,0.07);">
-                <div style="font-size:40px;font-weight:800;color:{color};">{prob * 100:.1f}%</div>
+                <div style="font-size:40px;font-weight:800;color:{color};">{prob*100:.1f}%</div>
                 <div style="font-size:12px;color:{color};letter-spacing:1px;margin-top:4px;">
-                    {icon} {tier.upper()} RISK · via {src}
+                    {icon} {tier.upper()} RISK
                 </div>
             </div>
         </div>
-    </div>""", unsafe_allow_html=True)
+    </div>""",unsafe_allow_html=True)
 
-    v_keys = [
-        ("fasting_blood_sugar", "FastingBloodSugar", "Glucose"),
-        ("hba1c", "HbA1c", "HbA1c %"),
-        ("bmi",   "BMI",   "BMI"),
-        ("cholesterol_total", "CholesterolTotal", "Cholesterol"),
-        ("systolic_bp",  "SystolicBP",  "Systolic BP"),
-        ("diastolic_bp", "DiastolicBP", "Diastolic BP"),
-    ]
-    vc = st.columns(len(v_keys))
-    for i, (k1, k2, lbl) in enumerate(v_keys):
-        vc[i].metric(lbl, fmt(rec.get(k1, rec.get(k2, ""))))
+    v_keys=[("fasting_blood_sugar","FastingBloodSugar","Glucose"),
+            ("hba1c","HbA1c","HbA1c %"),("bmi","BMI","BMI"),
+            ("cholesterol_total","CholesterolTotal","Cholesterol"),
+            ("systolic_bp","SystolicBP","Systolic BP"),("diastolic_bp","DiastolicBP","Diastolic BP")]
+    vc=st.columns(len(v_keys))
+    for i,(k1,k2,lbl) in enumerate(v_keys):
+        vc[i].metric(lbl,fmt(rec.get(k1,rec.get(k2,""))))
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    cl, cr = st.columns([3, 2])
-    with cl:
-        st.plotly_chart(proj_chart(simulate_projection(rec)), use_container_width=True)
+    st.markdown("<br>",unsafe_allow_html=True)
+    cl,cr=st.columns([3,2])
+    with cl: st.plotly_chart(proj_chart(simulate_projection(rec)),use_container_width=True)
     with cr:
-        st.plotly_chart(gauge_chart(prob), use_container_width=True)
-        st.plotly_chart(vitals_radar(rec), use_container_width=True)
+        st.plotly_chart(gauge_chart(prob),use_container_width=True)
+        st.plotly_chart(vitals_radar(rec),use_container_width=True)
 
-    st.markdown(f'<div class="ai-box">🤖 <b>Your Health Summary</b><br><br>{ai_summary(rec, prob)}</div>',
+    st.markdown(f'<div class="ai-box">🤖 <b>Your Health Summary</b><br><br>{ai_summary(rec,prob)}</div>',
                 unsafe_allow_html=True)
-    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<br>",unsafe_allow_html=True)
 
-    remarks = rec.get("doctor_remarks", rec.get("DoctorRemarks", ""))
+    remarks=rec.get("doctor_remarks",rec.get("DoctorRemarks",""))
     if remarks:
         st.markdown(f"""
         <div class="glass"><p class="sec-head">📝 Doctor's Notes</p>
         <div style="color:#94a3b8;font-size:14px;line-height:1.7;">{remarks}</div>
-        </div>""", unsafe_allow_html=True)
+        </div>""",unsafe_allow_html=True)
 
-    st.download_button(
-        "⬇️ Download My Record",
-        data=pd.DataFrame([{k: v for k, v in rec.items() if not k.startswith("_")}]).to_csv(index=False),
-        file_name=f"{pid}_record.csv",
-        mime="text/csv",
-    )
+    st.download_button("⬇️ Download My Record",
+        data=pd.DataFrame([{k:v for k,v in rec.items() if not k.startswith("_")}]).to_csv(index=False),
+        file_name=f"{pid}_record.csv",mime="text/csv")
 
     # Lifestyle estimator
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown('<p class="sec-head">🌿 Lifestyle Risk Estimator</p>', unsafe_allow_html=True)
+    st.markdown("<br>",unsafe_allow_html=True)
+    st.markdown('<p class="sec-head">🌿 Lifestyle Risk Estimator</p>',unsafe_allow_html=True)
     with st.form("lifestyle_form"):
-        c1, c2 = st.columns(2)
-        q1 = c1.select_slider("Exercise (mins/day)",   ["0", "10-30", "30-60", "60+"],    value="30-60")
-        q2 = c2.select_slider("Added sugar (tsp/day)", ["0-5", "6-10", "11-20", "20+"],   value="6-10")
-        q3 = c1.select_slider("Veg/fruit servings/day",["0-1", "2-3", "4-5", "5+"],       value="2-3")
-        q4 = c2.select_slider("Sleep (hrs/night)",     ["<5", "5-6", "6-7", "7+"],        value="6-7")
-        q5 = c1.select_slider("Fast food frequency",   ["Daily","Few/week","Weekly","Rarely"], value="Few/week")
-        q6 = c2.select_slider("Stress level (0-10)",   ["0-2", "3-5", "6-8", "9-10"],     value="3-5")
-        sub = st.form_submit_button("Calculate →", use_container_width=True)
-
+        c1,c2=st.columns(2)
+        q1=c1.select_slider("Exercise (mins/day)",["0","10-30","30-60","60+"],value="30-60")
+        q2=c2.select_slider("Added sugar (tsp/day)",["0-5","6-10","11-20","20+"],value="6-10")
+        q3=c1.select_slider("Veg/fruit servings/day",["0-1","2-3","4-5","5+"],value="2-3")
+        q4=c2.select_slider("Sleep (hrs/night)",["<5","5-6","6-7","7+"],value="6-7")
+        q5=c1.select_slider("Fast food frequency",["Daily","Few/week","Weekly","Rarely"],value="Few/week")
+        q6=c2.select_slider("Stress level (0-10)",["0-2","3-5","6-8","9-10"],value="3-5")
+        sub=st.form_submit_button("Calculate →",use_container_width=True)
     if sub:
-        sm = {"0": 0, "10-30": 1, "30-60": 2, "60+": 3,
-              "0-5": 3, "6-10": 2, "11-20": 1, "20+": 0,
-              "0-1": 0, "2-3": 1, "4-5": 2, "5+": 3,
-              "<5": 0, "5-6": 1, "6-7": 2, "7+": 3,
-              "Daily": 0, "Few/week": 1, "Weekly": 2, "Rarely": 3,
-              "0-2": 3, "3-5": 2, "6-8": 1, "9-10": 0}
-        total   = sum(sm.get(q, 0) for q in [q1, q2, q3, q4, q5, q6])
-        mod     = (total - 9) / 18.0
-        new_p   = float(np.clip(prob - mod * 0.25, 0, 1))
-        diff    = new_p - prob
-        hba_b   = _safe_float(rec.get("hba1c", rec.get("HbA1c", 5.5)))
-        hba_n   = hba_b + diff * 2
-        ca, cb, cc = st.columns(3)
-        ca.metric("Current Risk",  f"{prob  * 100:.1f}%")
-        cb.metric("Adjusted Risk", f"{new_p * 100:.1f}%", delta=f"{diff * 100:+.1f}%")
-        cc.metric("Est. HbA1c",    f"{hba_n:.2f}%",       delta=f"{hba_n - hba_b:+.2f}")
-        lm = {"Exercise": sm[q1], "Sugar": sm[q2], "Veg/Fruit": sm[q3],
-              "Sleep": sm[q4], "Fast Food": sm[q5], "Stress": sm[q6]}
-        fig = px.bar(
-            pd.DataFrame({"Factor": list(lm.keys()), "Score": list(lm.values())}),
-            x="Factor", y="Score", color="Score",
-            color_continuous_scale=[[0, "#f87171"], [0.5, "#fbbf24"], [1, "#34d399"]],
-            title="Lifestyle Score Breakdown (0=poor, 3=excellent)",
-        )
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                          font=dict(color="#94a3b8"), height=260, margin=dict(t=40, b=10))
-        st.plotly_chart(fig, use_container_width=True)
+        sm={"0":0,"10-30":1,"30-60":2,"60+":3,"0-5":3,"6-10":2,"11-20":1,"20+":0,
+            "0-1":0,"2-3":1,"4-5":2,"5+":3,"<5":0,"5-6":1,"6-7":2,"7+":3,
+            "Daily":0,"Few/week":1,"Weekly":2,"Rarely":3,"0-2":3,"3-5":2,"6-8":1,"9-10":0}
+        total=sum(sm.get(q,0) for q in [q1,q2,q3,q4,q5,q6])
+        mod=(total-9)/18.0;new_p=float(np.clip(prob-mod*0.25,0,1));diff=new_p-prob
+        hba_b=sf(rec.get("hba1c",rec.get("HbA1c",5.5)));hba_n=hba_b+diff*2
+        ca,cb,cc=st.columns(3)
+        ca.metric("Current Risk",f"{prob*100:.1f}%")
+        cb.metric("Adjusted Risk",f"{new_p*100:.1f}%",delta=f"{diff*100:+.1f}%")
+        cc.metric("Est. HbA1c",f"{hba_n:.2f}%",delta=f"{(hba_n-hba_b):+.2f}")
+        lm={"Exercise":sm[q1],"Sugar":sm[q2],"Veg/Fruit":sm[q3],
+            "Sleep":sm[q4],"Fast Food":sm[q5],"Stress":sm[q6]}
+        fig=px.bar(pd.DataFrame({"Factor":list(lm.keys()),"Score":list(lm.values())}),
+                   x="Factor",y="Score",color="Score",
+                   color_continuous_scale=[[0,"#f87171"],[0.5,"#fbbf24"],[1,"#34d399"]],
+                   title="Lifestyle Score Breakdown (0=poor, 3=excellent)")
+        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",
+                          font=dict(color="#94a3b8"),height=260,margin=dict(t=40,b=10))
+        st.plotly_chart(fig,use_container_width=True)
 
 
-# ─── PATIENT PORTAL ───────────────────────────────────────────────────────────
+#  PATIENT PORTAL (post-login)
 
 def patient_portal():
     render_header("Patient Portal")
     render_sidebar()
+
+    # ── Access control: patient locked to their own record ───────────────────
     pid = st.session_state.pat_pid
     rec = st.session_state.pat_record
+
     if not pid or not rec:
         st.error("⚠️ Session error. Please log out and scan your QR again.")
         return
+
     _render_patient_record(rec, pid)
 
 
-# ─── DOCTOR DASHBOARD ─────────────────────────────────────────────────────────
+#  DOCTOR DASHBOARD
 
 def doctor_dashboard():
     render_header("Doctor Dashboard")
     render_sidebar()
-    df = db_fetch_all()
+    df=db_fetch_all()
 
-    st.markdown('<p class="sec-head">Patient Lookup</p>', unsafe_allow_html=True)
-    c1, c2 = st.columns([3, 1])
-    pid_in = c1.text_input("Patient ID", placeholder="e.g. P001", label_visibility="collapsed")
-    fetch  = c2.button("🔍 Fetch", use_container_width=True)
+    st.markdown('<p class="sec-head">Patient Lookup</p>',unsafe_allow_html=True)
+    c1,c2=st.columns([3,1])
+    pid_in=c1.text_input("Patient ID",placeholder="e.g. P001",label_visibility="collapsed")
+    fetch=c2.button("🔍 Fetch",use_container_width=True)
 
     if fetch and pid_in.strip():
-        pid_col = next((c for c in df.columns if c.lower() == "patient_id"), None)
+        pid_col=next((c for c in df.columns if c.lower()=="patient_id"),None)
         if pid_col:
-            rows = df[df[pid_col].astype(str).str.strip() == pid_in.strip()]
+            rows=df[df[pid_col].astype(str).str.strip()==pid_in.strip()]
             if not rows.empty:
-                st.session_state.doc_record = rows.iloc[0].to_dict()
-                st.session_state.doc_pid    = pid_in.strip()
+                st.session_state.doc_record=rows.iloc[0].to_dict()
+                st.session_state.doc_pid=pid_in.strip()
             else:
                 st.error(f"No patient found: `{pid_in.strip()}`")
 
-    rec = st.session_state.get("doc_record")
-    pid = st.session_state.get("doc_pid")
-
+    rec=st.session_state.get("doc_record"); pid=st.session_state.get("doc_pid")
     if rec:
-        prob, src = predict_prob(rec)
-        tier, color, icon = risk_tier(prob)
-        name = rec.get("name", rec.get("Name", pid))
-
+        prob,src=predict_prob(rec); tier,color,icon=risk_tier(prob)
+        name=rec.get("name",rec.get("Name",pid))
         st.markdown(f"""
         <div class="glass" style="border-left:3px solid {color};">
             <div style="display:flex;justify-content:space-between;align-items:center;">
                 <div>
                     <div style="font-size:22px;font-weight:700;">{name}</div>
                     <div style="font-size:13px;color:#64748b;margin-top:4px;">
-                        ID: {pid} · Age: {fmt(rec.get('age',''), 0)} · {rec.get('diagnosis','—')}
+                        ID: {pid} · Age: {fmt(rec.get('age',''),0)} · {rec.get('diagnosis','—')}
                     </div>
                 </div>
                 <div style="text-align:right;">
-                    <div style="font-size:36px;font-weight:800;color:{color};">{prob * 100:.1f}%</div>
-                    <div style="font-size:13px;color:{color};">{icon} {tier} Risk · {src}</div>
+                    <div style="font-size:36px;font-weight:800;color:{color};">{prob*100:.1f}%</div>
+                    <div style="font-size:13px;color:{color};">{icon} {tier} Risk</div>
                 </div>
             </div>
-        </div>""", unsafe_allow_html=True)
+        </div>""",unsafe_allow_html=True)
 
-        v_keys = [
-            ("fasting_blood_sugar", "FastingBloodSugar", "Glucose"),
-            ("hba1c", "HbA1c", "HbA1c %"),
-            ("bmi", "BMI", "BMI"),
-            ("cholesterol_total", "CholesterolTotal", "Cholesterol"),
-            ("systolic_bp", "SystolicBP", "Systolic BP"),
-            ("diastolic_bp", "DiastolicBP", "Diastolic BP"),
-        ]
-        vc = st.columns(len(v_keys))
-        for i, (k1, k2, lbl) in enumerate(v_keys):
-            vc[i].metric(lbl, fmt(rec.get(k1, rec.get(k2, ""))))
+        v_keys=[("fasting_blood_sugar","FastingBloodSugar","Glucose"),
+                ("hba1c","HbA1c","HbA1c %"),("bmi","BMI","BMI"),
+                ("cholesterol_total","CholesterolTotal","Cholesterol"),
+                ("systolic_bp","SystolicBP","Systolic BP"),("diastolic_bp","DiastolicBP","Diastolic BP")]
+        vc=st.columns(len(v_keys))
+        for i,(k1,k2,lbl) in enumerate(v_keys):
+            vc[i].metric(lbl,fmt(rec.get(k1,rec.get(k2,""))))
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        cl, cr = st.columns([3, 2])
+        st.markdown("<br>",unsafe_allow_html=True)
+        cl,cr=st.columns([3,2])
         with cl:
-            st.plotly_chart(proj_chart(simulate_projection(rec)), use_container_width=True)
-            st.markdown('<p class="sec-head">Full Record</p>', unsafe_allow_html=True)
-            clean = {k: fmt(v) for k, v in rec.items() if not k.startswith("_")}
-            st.dataframe(pd.DataFrame(clean.items(), columns=["Field", "Value"]),
-                         use_container_width=True, hide_index=True, height=320)
+            st.plotly_chart(proj_chart(simulate_projection(rec)),use_container_width=True)
+            st.markdown('<p class="sec-head">Full Record</p>',unsafe_allow_html=True)
+            clean={k:fmt(v) for k,v in rec.items() if not k.startswith("_")}
+            st.dataframe(pd.DataFrame(clean.items(),columns=["Field","Value"]),
+                         use_container_width=True,hide_index=True,height=320)
         with cr:
-            st.plotly_chart(gauge_chart(prob), use_container_width=True)
-            st.plotly_chart(vitals_radar(rec), use_container_width=True)
+            st.plotly_chart(gauge_chart(prob),use_container_width=True)
+            st.plotly_chart(vitals_radar(rec),use_container_width=True)
+            # Show patient JWT QR code
             try:
-                qp = generate_secure_qr(pid)
-                st.image(qp, width=140, caption="Secure JWT QR")
+                qp=generate_secure_qr(pid)
+                st.image(qp,width=140,caption="Secure JWT QR")
                 st.markdown(f"""
                 <div class="jwt-info">
                     🔐 JWT · HS256 · Exp: {JWT_EXPIRY_DAYS}d<br>
                     Payload: patient_id + role + iat + exp
-                </div>""", unsafe_allow_html=True)
+                </div>""",unsafe_allow_html=True)
             except Exception:
                 pass
 
-        st.markdown(f'<div class="ai-box">🤖 <b>AI Assessment</b><br><br>{ai_summary(rec, prob)}</div>',
+        st.markdown(f'<div class="ai-box">🤖 <b>AI Assessment</b><br><br>{ai_summary(rec,prob)}</div>',
                     unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown('<p class="sec-head">Doctor Remarks</p>', unsafe_allow_html=True)
-        existing = rec.get("doctor_remarks", "")
-        note = st.text_area("Remarks", value=existing, height=100, label_visibility="collapsed")
+        st.markdown("<br>",unsafe_allow_html=True)
+        st.markdown('<p class="sec-head">Doctor Remarks</p>',unsafe_allow_html=True)
+        existing=rec.get("doctor_remarks","")
+        note=st.text_area("Remarks",value=existing,height=100,label_visibility="collapsed")
         if st.button("💾 Save Remarks to Database"):
-            updated = dict(rec)
-            updated["doctor_remarks"] = note
-            ok = db_upsert({k: updated[k] for k in updated if not k.startswith("_")})
+            updated=dict(rec); updated["doctor_remarks"]=note
+            ok=db_upsert({k:updated[k] for k in updated if not k.startswith("_")})
             if ok:
                 st.success("✅ Saved to Supabase!")
-                st.session_state.doc_record["doctor_remarks"] = note
+                st.session_state.doc_record["doctor_remarks"]=note
                 st.cache_data.clear()
             else:
                 st.warning("⚠️ Supabase not configured. Saved in session only.")
-                st.session_state.doc_record["doctor_remarks"] = note
+                st.session_state.doc_record["doctor_remarks"]=note
     else:
         st.markdown("""
         <div class="glass" style="text-align:center;padding:48px;color:#475569;">
             <div style="font-size:48px;margin-bottom:16px;">🔍</div>
             <div style="font-size:16px;">Enter a Patient ID to view their record</div>
-        </div>""", unsafe_allow_html=True)
+        </div>""",unsafe_allow_html=True)
 
 
-# ─── ADMIN DASHBOARD ──────────────────────────────────────────────────────────
+#  ADMIN DASHBOARD
 
 def admin_dashboard():
     render_header("Admin Dashboard")
     render_sidebar()
-    df = db_fetch_all()
+    df=db_fetch_all()
 
-    total   = len(df)
-    hba_col = next((c for c in df.columns if c.lower() == "hba1c"), None)
-    age_col = next((c for c in df.columns if c.lower() == "age"),   None)
-    avg_hba = pd.to_numeric(df[hba_col], errors="coerce").mean() if hba_col else float("nan")
-    avg_age = pd.to_numeric(df[age_col], errors="coerce").mean() if age_col else float("nan")
+    total=len(df)
+    hba_col=next((c for c in df.columns if c.lower()=="hba1c"),None)
+    age_col=next((c for c in df.columns if c.lower()=="age"),None)
+    avg_hba=pd.to_numeric(df[hba_col],errors="coerce").mean() if hba_col else float("nan")
+    avg_age=pd.to_numeric(df[age_col],errors="coerce").mean() if age_col else float("nan")
 
-    all_probs = []
-    for _, row in df.iterrows():
-        p, _ = predict_prob(row.to_dict())
-        all_probs.append(p)
-    df["_risk"]  = all_probs
-    high_risk    = int((np.array(all_probs) >= 0.65).sum())
+    all_probs=[]
+    for _,row in df.iterrows():
+        p,_=predict_prob(row.to_dict()); all_probs.append(p)
+    df["_risk"]=all_probs
+    high_risk=int((np.array(all_probs)>=0.65).sum())
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("👥 Patients",  total)
-    c2.metric("⚠️ High Risk", high_risk)
-    c3.metric("📊 Avg HbA1c", f"{avg_hba:.2f}" if not np.isnan(avg_hba) else "—")
-    c4.metric("🎂 Avg Age",   f"{avg_age:.0f}" if not np.isnan(avg_age) else "—")
+    c1,c2,c3,c4=st.columns(4)
+    c1.metric("👥 Patients",total)
+    c2.metric("⚠️ High Risk",high_risk)
+    c3.metric("📊 Avg HbA1c",f"{avg_hba:.2f}" if not np.isnan(avg_hba) else "—")
+    c4.metric("🎂 Avg Age",f"{avg_age:.0f}" if not np.isnan(avg_age) else "—")
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    tab1, tab2, tab3 = st.tabs(["📋 Patient Records", "➕ Add Patient", "📊 Analytics"])
+    st.markdown("<br>",unsafe_allow_html=True)
+    tab1,tab2,tab3=st.tabs(["📋 Patient Records","➕ Add Patient","📊 Analytics"])
 
     with tab1:
-        disp = df.drop(columns=["_risk"], errors="ignore")
-        st.dataframe(disp, use_container_width=True, height=400)
-        st.download_button(
-            "⬇️ Export CSV",
-            data=disp.to_csv(index=False).encode(),
-            file_name="gluco_lens_patients.csv",
-            mime="text/csv",
-        )
+        disp=df.drop(columns=["_risk"],errors="ignore")
+        st.dataframe(disp,use_container_width=True,height=400)
+        st.download_button("⬇️ Export CSV",data=disp.to_csv(index=False).encode(),
+                           file_name="gluco_lens_patients.csv",mime="text/csv")
 
     with tab2:
-        st.markdown('<p class="sec-head">New Patient Record</p>', unsafe_allow_html=True)
+        st.markdown('<p class="sec-head">New Patient Record</p>',unsafe_allow_html=True)
         with st.form("add_pt"):
-            c1, c2, c3 = st.columns(3)
-            pid_v  = c1.text_input("Patient ID*", value=f"P{total + 1:03d}")
-            name_v = c2.text_input("Full Name*")
-            diag_v = c3.text_input("Diagnosis")
+            c1,c2,c3=st.columns(3)
+            pid=c1.text_input("Patient ID*",value=f"P{total+1:03d}")
+            name=c2.text_input("Full Name*")
+            diag=c3.text_input("Diagnosis")
+            c1,c2,c3,c4=st.columns(4)
+            age_v=c1.number_input("Age",18,100,40); gen_v=c2.selectbox("Gender",["Male","Female"])
+            bmi_v=c3.number_input("BMI",10.0,60.0,25.0); hba_v=c4.number_input("HbA1c (%)",3.0,15.0,5.5)
+            c1,c2,c3,c4=st.columns(4)
+            fbs_v=c1.number_input("Fasting Blood Sugar",50,400,100)
+            chol_v=c2.number_input("Total Cholesterol",50,500,180)
+            sbp_v=c3.number_input("Systolic BP",80,220,120)
+            dbp_v=c4.number_input("Diastolic BP",40,130,80)
+            c1,c2=st.columns(2)
+            hyp_v=c1.selectbox("Hypertension",["No","Yes"])
+            fam_v=c2.selectbox("Family History Diabetes",["No","Yes"])
+            remarks_v=st.text_area("Doctor Remarks",height=80)
 
-            c1, c2, c3, c4 = st.columns(4)
-            age_v = c1.number_input("Age",     18,  100, 40)
-            # BUG FIX #12: gender is now stored as string ("Male"/"Female"/"Other")
-            # to be compatible with preprocess_input() → _GENDER_DUMMIES.
-            # Old code stored 1/0 integer and passed it straight to a scaler —
-            # fine for RF but wrong for pd.get_dummies pipeline.
-            gen_v = c2.selectbox("Gender", ["Male", "Female", "Other"])
-            bmi_v = c3.number_input("BMI",     10.0, 60.0, 25.0)
-            hba_v = c4.number_input("HbA1c (%)", 3.0, 15.0, 5.5)
-
-            c1, c2, c3, c4 = st.columns(4)
-            fbs_v  = c1.number_input("Fasting Blood Sugar",  50, 400, 100)
-            chol_v = c2.number_input("Total Cholesterol",    50, 500, 180)
-            sbp_v  = c3.number_input("Systolic BP",          80, 220, 120)
-            dbp_v  = c4.number_input("Diastolic BP",         40, 130,  80)
-
-            c1, c2, c3 = st.columns(3)
-            hyp_v  = c1.selectbox("Hypertension",           ["No", "Yes"])
-            hd_v   = c2.selectbox("Heart Disease",          ["No", "Yes"])
-            # BUG FIX #13: smoking_history is now stored as a proper category string
-            # matching the training data values so preprocess_input() → _SMOKING_DUMMIES
-            # can resolve it correctly.  Old code stored a binary 0/1 "Smoking" field
-            # which did not exist in the XGBoost training dataset at all.
-            smk_v  = c3.selectbox("Smoking History",
-                                  ["never", "former", "current", "ever",
-                                   "not current", "No Info"])
-
-            remarks_v = st.text_area("Doctor Remarks", height=80)
-
-            if st.form_submit_button("✅ Save Patient & Generate Secure QR", use_container_width=True):
-                if not name_v.strip():
+            if st.form_submit_button("✅ Save Patient & Generate Secure QR",use_container_width=True):
+                if not name.strip():
                     st.error("Name is required.")
                 else:
-                    row = {
-                        "patient_id":           pid_v.strip(),
-                        "name":                 name_v.strip(),
-                        "age":                  age_v,
-                        "gender":               gen_v,              # string, not int
-                        "bmi":                  bmi_v,
-                        "hba1c":                hba_v,
-                        "fasting_blood_sugar":  fbs_v,
-                        "cholesterol_total":    chol_v,
-                        "systolic_bp":          sbp_v,
-                        "diastolic_bp":         dbp_v,
-                        "hypertension":         1 if hyp_v == "Yes" else 0,
-                        "heart_disease":        1 if hd_v  == "Yes" else 0,
-                        "smoking_history":      smk_v,              # string category
-                        "diagnosis":            diag_v,
-                        "doctor_remarks":       remarks_v,
-                        "created_at":           datetime.utcnow().isoformat(),
-                    }
-
-                    # Sanity-check: verify prediction works before saving
+                    row={"patient_id":pid.strip(),"name":name.strip(),
+                         "age":age_v,"gender":1 if gen_v=="Male" else 0,
+                         "bmi":bmi_v,"hba1c":hba_v,"fasting_blood_sugar":fbs_v,
+                         "cholesterol_total":chol_v,"systolic_bp":sbp_v,"diastolic_bp":dbp_v,
+                         "hypertension":1 if hyp_v=="Yes" else 0,
+                         "family_history_diabetes":1 if fam_v=="Yes" else 0,
+                         "diagnosis":diag,"doctor_remarks":remarks_v,
+                         "created_at":datetime.utcnow().isoformat()}
+                    ok=db_upsert(row)
+                    # Generate JWT QR
                     try:
-                        test_prob, _ = predict_prob(row)
-                        tier_name, tier_color, tier_icon = risk_tier(test_prob)
-                        st.markdown(f"""
-                        <div class="glass" style="border-left:3px solid {tier_color};margin-bottom:12px;">
-                            <div style="font-size:16px;font-weight:600;">
-                                {tier_icon} Predicted Risk: 
-                                <span style="color:{tier_color}">{test_prob * 100:.1f}% ({tier_name})</span>
-                            </div>
-                            <div style="font-size:12px;color:#64748b;margin-top:4px;">
-                                XGBoost model prediction verified ✓
-                            </div>
-                        </div>""", unsafe_allow_html=True)
-                    except Exception as e:
-                        st.warning(f"Prediction preview failed: {e}")
-
-                    ok = db_upsert(row)
-                    try:
-                        qp = generate_secure_qr(pid_v.strip())
-                        col_a, col_b = st.columns(2)
+                        qp=generate_secure_qr(pid.strip())
+                        col_a,col_b=st.columns(2)
                         with col_a:
-                            st.image(qp, width=180, caption=f"JWT QR · {pid_v}")
+                            st.image(qp,width=180,caption=f"JWT QR · {pid}")
                         with col_b:
                             st.markdown(f"""
                             <div class="jwt-info" style="margin-top:0">
                                 🔐 Secure JWT Token<br>
-                                Patient: {pid_v.strip()}<br>
+                                Patient: {pid.strip()}<br>
                                 Algorithm: HS256<br>
                                 Expires: {JWT_EXPIRY_DAYS} days<br>
                                 <br>
                                 Patient scans this QR →<br>
                                 Auto-login (no password)
-                            </div>""", unsafe_allow_html=True)
+                            </div>""",unsafe_allow_html=True)
                     except Exception as e:
                         st.warning(f"QR gen error: {e}")
                     if ok:
-                        st.success(f"✅ Patient {pid_v} saved to database!")
+                        st.success(f"✅ Patient {pid} saved to database!")
                         st.cache_data.clear()
                     else:
                         st.warning("⚠️ Supabase not connected. Add SUPABASE_URL & SUPABASE_KEY to secrets.")
 
     with tab3:
         if hba_col:
-            hba_vals = pd.to_numeric(df[hba_col], errors="coerce").dropna()
-            col1, col2 = st.columns(2)
+            hba_vals=pd.to_numeric(df[hba_col],errors="coerce").dropna()
+            col1,col2=st.columns(2)
             with col1:
-                fig = px.histogram(hba_vals, nbins=20, title="HbA1c Distribution",
-                                   color_discrete_sequence=["#6366f1"])
-                fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                                  font=dict(color="#94a3b8"), height=280, margin=dict(t=40, b=10))
-                st.plotly_chart(fig, use_container_width=True)
+                fig=px.histogram(hba_vals,nbins=20,title="HbA1c Distribution",
+                                  color_discrete_sequence=["#6366f1"])
+                fig.update_layout(paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",
+                                  font=dict(color="#94a3b8"),height=280,margin=dict(t=40,b=10))
+                st.plotly_chart(fig,use_container_width=True)
             with col2:
-                rc  = pd.Series(["High" if p >= 0.65 else "Moderate" if p >= 0.35 else "Low"
-                                  for p in all_probs]).value_counts()
-                fig2 = px.pie(values=rc.values, names=rc.index, title="Risk Distribution",
-                              color_discrete_map={"High": "#f87171", "Moderate": "#fbbf24", "Low": "#34d399"},
-                              hole=0.55)
-                fig2.update_layout(paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#94a3b8"),
-                                   height=280, margin=dict(t=40, b=10))
-                st.plotly_chart(fig2, use_container_width=True)
-
-        # Feature importance chart
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown('<p class="sec-head">🔬 Model Feature Importances (XGBoost)</p>', unsafe_allow_html=True)
-        try:
-            importances = MODEL.feature_importances_
-            fi_df = pd.DataFrame({
-                "Feature":    FEATURE_COLUMNS,
-                "Importance": importances,
-            }).sort_values("Importance", ascending=False).head(15)
-            fig3 = px.bar(fi_df, x="Importance", y="Feature", orientation="h",
-                          color="Importance",
-                          color_continuous_scale=[[0, "#6366f1"], [1, "#38bdf8"]],
-                          title="Top 15 Features")
-            fig3.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                               font=dict(color="#94a3b8"), height=420,
-                               margin=dict(t=40, b=10), yaxis=dict(autorange="reversed"))
-            st.plotly_chart(fig3, use_container_width=True)
-        except Exception as e:
-            st.caption(f"Feature importance unavailable: {e}")
+                rc=pd.Series(["High" if p>=0.65 else "Moderate" if p>=0.35 else "Low"
+                              for p in all_probs]).value_counts()
+                fig2=px.pie(values=rc.values,names=rc.index,title="Risk Distribution",
+                            color_discrete_map={"High":"#f87171","Moderate":"#fbbf24","Low":"#34d399"},
+                            hole=0.55)
+                fig2.update_layout(paper_bgcolor="rgba(0,0,0,0)",font=dict(color="#94a3b8"),
+                                   height=280,margin=dict(t=40,b=10))
+                st.plotly_chart(fig2,use_container_width=True)
 
 
-# ─── MAIN ROUTER ──────────────────────────────────────────────────────────────
+#  MAIN ROUTER
 
 if not st.session_state.logged_in:
     show_login()
 else:
-    role = st.session_state.role
-    if role == "Admin":
+    role=st.session_state.role
+    if role=="Admin":
         admin_dashboard()
-    elif role == "Doctor":
+    elif role=="Doctor":
         doctor_dashboard()
-    elif role == "Patient":
+    elif role=="Patient":
         patient_portal()
     else:
         st.error("Unknown role. Please log out.")
