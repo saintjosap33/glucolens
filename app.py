@@ -15,39 +15,29 @@ import json
 from datetime import datetime, timezone, timedelta
 
 
-<<<<<<< HEAD
 # ─── OPTIONAL DEPENDENCIES ────────────────────────────────────────────────────
 
-=======
 #Supabase 
->>>>>>> a878861eadb88d43e84c433944a811ecbcafee7b
 try:
     from supabase import create_client, Client
     SUPABASE_AVAILABLE = True
 except ImportError:
     SUPABASE_AVAILABLE = False
 
-<<<<<<< HEAD
-=======
 #JWT (PyJWT)
->>>>>>> a878861eadb88d43e84c433944a811ecbcafee7b
 try:
     import jwt as pyjwt
     JWT_AVAILABLE = True
 except ImportError:
     JWT_AVAILABLE = False
 
-<<<<<<< HEAD
-=======
 #pyzbar QR decode
->>>>>>> a878861eadb88d43e84c433944a811ecbcafee7b
 try:
     from pyzbar import pyzbar as pyzbar_lib
     PYZBAR_AVAILABLE = True
 except Exception:
     PYZBAR_AVAILABLE = False
 
-<<<<<<< HEAD
 from PIL import Image
 
 # ─── REMOVED IMPORTS (bugs fixed) ─────────────────────────────────────────────
@@ -74,7 +64,6 @@ os.makedirs(QR_FOLDER, exist_ok=True)
 # ─── JWT / AUTH ───────────────────────────────────────────────────────────────
 
 JWT_SECRET      = "gluco-lens-jwt-secret-2024-change-in-production"
-=======
 #PIL
 from PIL import Image
 
@@ -91,7 +80,6 @@ os.makedirs(QR_FOLDER, exist_ok=True)
 
 # JWT secret
 JWT_SECRET  = "gluco-lens-jwt-secret-2024-change-in-production"
->>>>>>> a878861eadb88d43e84c433944a811ecbcafee7b
 JWT_EXPIRY_DAYS = 365
 
 SUPABASE_URL = ""
@@ -114,18 +102,15 @@ CREDENTIALS = {
 
 # ─── PAGE CONFIG ──────────────────────────────────────────────────────────────
 
-<<<<<<< HEAD
 st.set_page_config(
     page_title="GLUCO-LENS",
     page_icon="🩺",
     layout="wide",
     initial_sidebar_state="expanded",
 )
-=======
 
 st.set_page_config(page_title="GLUCO-LENS", page_icon="🩺", layout="wide",
                    initial_sidebar_state="expanded")
->>>>>>> a878861eadb88d43e84c433944a811ecbcafee7b
 
 st.markdown("""
 <style>
@@ -307,11 +292,8 @@ hr { border-color:rgba(255,255,255,0.06) !important; }
 </style>
 """, unsafe_allow_html=True)
 
-<<<<<<< HEAD
 # ─── SESSION STATE ─────────────────────────────────────────────────────────────
-=======
 # SESSION STATE
->>>>>>> a878861eadb88d43e84c433944a811ecbcafee7b
 
 _defaults = dict(
     logged_in=False, role=None, username=None,
@@ -323,11 +305,8 @@ for k, v in _defaults.items():
         st.session_state[k] = v
 
 
-<<<<<<< HEAD
 # ─── SUPABASE ──────────────────────────────────────────────────────────────────
-=======
 # SUPABASE
->>>>>>> a878861eadb88d43e84c433944a811ecbcafee7b
 
 @st.cache_resource
 def get_supabase():
@@ -359,7 +338,6 @@ def db_upsert(row: dict) -> bool:
             st.error(f"DB write error: {e}")
     return False
 
-<<<<<<< HEAD
 def _demo_df() -> pd.DataFrame:
     """Minimal demo dataset — used only when Supabase is not connected."""
     return pd.DataFrame([
@@ -371,9 +349,7 @@ def _demo_df() -> pd.DataFrame:
          "diagnosis": "Pre-diabetic", "doctor_remarks": "Monitor closely."},
     ])
 
-=======
 # JWT SECURE QR SECTION
->>>>>>> a878861eadb88d43e84c433944a811ecbcafee7b
 
 # ─── JWT / SECURE QR ──────────────────────────────────────────────────────────
 
@@ -456,8 +432,6 @@ def qr_from_image_file(pil_img) -> str | None:
     
 # ML MODEL
 
-<<<<<<< HEAD
-=======
 @st.cache_resource(show_spinner="🧠 Loading / training ML model…")
 def load_or_train_model():
     if os.path.exists(MODEL_PATH) and os.path.exists(SCALER_PATH):
@@ -468,7 +442,6 @@ def load_or_train_model():
             return model, scaler, feats, None, "loaded"
         except Exception:
             pass
->>>>>>> a878861eadb88d43e84c433944a811ecbcafee7b
 
 # ─── ML MODEL LOADING ─────────────────────────────────────────────────────────
 #
@@ -714,16 +687,13 @@ def predict_prob(patient: dict) -> tuple[float, str]:
         return round(p, 4), "heuristic"
 
 
-<<<<<<< HEAD
 # ─── HELPER UTILS ─────────────────────────────────────────────────────────────
 
 def _safe_float(x, default=0.0) -> float:
     """Convert x to float safely; return default on failure."""
-=======
 # ML UTILS
 
 def sf(x, d=0.0):
->>>>>>> a878861eadb88d43e84c433944a811ecbcafee7b
     try:
         if x is None or x == "" or (isinstance(x, float) and np.isnan(x)):
             return float(default)
@@ -767,7 +737,6 @@ def ai_summary(rec: dict, prob: float) -> str:
     proj = simulate_projection(rec)
     return f"{icon} **{tier} Risk ({prob * 100:.1f}%)** — {msgs[tier]} Projected 5-yr: {' → '.join(str(x) + '%' for x in proj)}"
 
-<<<<<<< HEAD
 
 def fmt(v, decimals: int = 2) -> str:
     if v is None or v == "":
@@ -802,7 +771,6 @@ def gauge_chart(prob: float):
     ))
     fig.update_layout(height=260, margin=dict(t=40, b=10, l=20, r=20),
                       paper_bgcolor="rgba(0,0,0,0)", font=dict(color="white"))
-=======
 # Charts
 def gauge_chart(prob):
     tier,color,_=risk_tier(prob)
@@ -820,7 +788,6 @@ def gauge_chart(prob):
         title={"text":f"<b>{tier} Risk</b>","font":{"color":color,"family":"Outfit","size":16}}))
     fig.update_layout(height=260,margin=dict(t=40,b=10,l=20,r=20),
                       paper_bgcolor="rgba(0,0,0,0)",font=dict(color="white"))
->>>>>>> a878861eadb88d43e84c433944a811ecbcafee7b
     return fig
 
 
@@ -849,7 +816,6 @@ def proj_chart(pts: list[float]):
     )
     return fig
 
-<<<<<<< HEAD
 
 def vitals_radar(rec: dict):
     cats = ["HbA1c", "BMI", "BP", "Cholesterol", "Glucose", "Age"]
@@ -887,12 +853,10 @@ def vitals_radar(rec: dict):
 def render_header(subtitle: str = "Smart Diabetes EMR"):
     sb_badge  = "🟢 Connected" if get_supabase() else "🟡 Demo Mode"
     ml_badge  = "🧠 XGBoost · Loaded"
-=======
 # Header / Sidebar
 def render_header(subtitle="Smart Diabetes EMR"):
     sb="🟢 Connected" if get_supabase() else "🟡 Demo Mode"
     ml=f"🧠 {'Loaded' if MODEL_SRC=='loaded' else 'Auto-trained'}" + (f" · {MODEL_ACC}% acc" if MODEL_ACC else "")
->>>>>>> a878861eadb88d43e84c433944a811ecbcafee7b
     jwt_badge = "🔐 JWT QR Active" if JWT_AVAILABLE else "🔐 JWT (fallback)"
     st.markdown(f"""
     <div class="topbar">
@@ -933,12 +897,9 @@ def render_sidebar():
                 st.session_state[k] = _defaults[k]
             st.rerun()
 
-<<<<<<< HEAD
 
 # ─── LOGIN ────────────────────────────────────────────────────────────────────
-=======
 #  LOGIN SCREEN
->>>>>>> a878861eadb88d43e84c433944a811ecbcafee7b
 
 def show_login():
     render_header("Secure Healthcare Login")
@@ -1020,16 +981,13 @@ def _attempt_jwt_login(token: str):
         st.error("❌ Invalid or expired QR token.")
         st.session_state.last_scanned_token = None
 
-<<<<<<< HEAD
 
 # ─── PATIENT RECORD RENDERER ──────────────────────────────────────────────────
 
 def _render_patient_record(rec: dict, pid: str):
-=======
 #  PATIENT RECORD 
 
 def _render_patient_record(rec, pid):
->>>>>>> a878861eadb88d43e84c433944a811ecbcafee7b
     prob, src = predict_prob(rec)
     tier, color, icon = risk_tier(prob)
     name = rec.get("name", rec.get("Name", pid))
@@ -1134,12 +1092,9 @@ def _render_patient_record(rec, pid):
 
 # ─── PATIENT PORTAL ───────────────────────────────────────────────────────────
 
-<<<<<<< HEAD
-=======
 
 #  PATIENT PORTAL (post-login)
 
->>>>>>> a878861eadb88d43e84c433944a811ecbcafee7b
 def patient_portal():
     render_header("Patient Portal")
     render_sidebar()
@@ -1151,11 +1106,8 @@ def patient_portal():
     _render_patient_record(rec, pid)
 
 
-<<<<<<< HEAD
 # ─── DOCTOR DASHBOARD ─────────────────────────────────────────────────────────
-=======
 #  DOCTOR DASHBOARD
->>>>>>> a878861eadb88d43e84c433944a811ecbcafee7b
 
 def doctor_dashboard():
     render_header("Doctor Dashboard")
@@ -1262,12 +1214,9 @@ def doctor_dashboard():
 
 # ─── ADMIN DASHBOARD ──────────────────────────────────────────────────────────
 
-<<<<<<< HEAD
-=======
 
 #  ADMIN DASHBOARD
 
->>>>>>> a878861eadb88d43e84c433944a811ecbcafee7b
 def admin_dashboard():
     render_header("Admin Dashboard")
     render_sidebar()
@@ -1450,12 +1399,9 @@ def admin_dashboard():
 
 # ─── MAIN ROUTER ──────────────────────────────────────────────────────────────
 
-<<<<<<< HEAD
-=======
 
 #  MAIN ROUTER
 
->>>>>>> a878861eadb88d43e84c433944a811ecbcafee7b
 if not st.session_state.logged_in:
     show_login()
 else:
