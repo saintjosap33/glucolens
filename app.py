@@ -984,8 +984,6 @@ def _attempt_jwt_login(token: str):
 
 # ─── PATIENT RECORD RENDERER ──────────────────────────────────────────────────
 
-def _render_patient_record(rec: dict, pid: str):
-#  PATIENT RECORD 
 
 def _render_patient_record(rec, pid):
     prob, src = predict_prob(rec)
